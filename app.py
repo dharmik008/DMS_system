@@ -95,8 +95,12 @@ def create_app():
 
     # ── Public base URL — used for minisite full URLs ──────────────────────────
     # Set APP_URL env var in production: export APP_URL=https://yourdomain.com
-    # Falls back to http://localhost:5000 for local dev.
-    _raw_app_url = os.environ.get('APP_URL', 'http://localhost:5000').rstrip('/')
+    # (or https://yourdomain.com/app if deployed under a subdirectory).
+    # If APP_URL is not set, the minisite_url() helpers below derive the base
+    # URL dynamically from the incoming request's origin (request.url_root),
+    # so local dev automatically resolves to http://localhost:5000 and a live
+    # deployment automatically resolves to its real domain — no hardcoding.
+    _raw_app_url = os.environ.get('APP_URL', '').rstrip('/')
     app.config['APP_URL'] = _raw_app_url
 
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -362,6 +366,12 @@ def create_app():
         if not website_name:
             return ''
         base = app.config.get('APP_URL', '').rstrip('/')
+        if not base:
+            from flask import request as _req
+            try:
+                base = _req.url_root.rstrip('/')
+            except RuntimeError:
+                base = 'http://localhost:5000'
         d_slug = (dealer_name or '').strip().lower().replace(' ', '')
         w_slug = website_name.strip().lower().replace(' ', '-')
         return f'{base}/caryanams/{d_slug}/{w_slug}'
