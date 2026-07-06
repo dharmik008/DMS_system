@@ -485,6 +485,18 @@ function _restoreImageSettings(imgId) {
 // The "Save to Inventory" button is only shown when VEHICLE_ID is set.
 const VEHICLE_ID = new URLSearchParams(window.location.search).get('vehicle_id') || null;
 
+// Was Studio opened from the vehicle's "Current Primary Photo" slot?
+// (dealer/vehicle_form.html appends &primary=1 for that specific link.)
+// Used so a background-removed replacement keeps Primary status, while
+// images pushed from the generic "Additional Gallery Photos" Studio link
+// don't silently steal the Primary spot from another photo.
+const IS_PRIMARY_CONTEXT = new URLSearchParams(window.location.search).get('primary') === '1';
+
+// Tracks which Studio image ids have already been auto-pushed to the
+// vehicle, so we don't push the same image twice if the user clicks
+// "Remove Background" again on it.
+const _autoSavedIds = new Set();
+
 // ─── Drop Zone ───────────────────────────────────────────────────────────────
 const dropZone = document.getElementById('dropZone');
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
@@ -688,6 +700,16 @@ document.getElementById('btnRemoveBg').addEventListener('click', async () => {
     document.getElementById('btnApplyAll').disabled      = false;
     renderThumbs();
     flashSuccess(data.bg_removed ? `Background removed (${data.method})` : 'Original kept (no BG detected)');
+    hideOverlay();
+
+    // ── Auto-integration with Vehicle Images ────────────────────────────────
+    // If Studio was opened from a specific vehicle, immediately reuse the
+    // existing upload/save logic (save-to-inventory) so the processed image
+    // shows up in that vehicle's gallery without any extra manual steps.
+    if (VEHICLE_ID) {
+      await pushToInventory(img, { auto: true });
+    }
+    return;
   } catch(e) {
     alert('Error: ' + e.message);
   }
@@ -923,48 +945,101 @@ if (VEHICLE_ID) {
   if (btn) btn.style.display = 'inline-flex';
 }
 
-// Called when user clicks "Save to Inventory".
-// Sends image_id + vehicle_id to the backend which copies the file and
-// updates vehicle.image_filename — no manual re-upload needed.
-async function saveToInventory() {
-  const img = images[activeIdx];
-  if (!img) { alert('No image selected.'); return; }
-
+// ── Save to Inventory (shared by auto-trigger + manual button) ──────────────
+// Reuses the existing /studio/api/save-to-inventory endpoint — the same one
+// the "Save to Inventory" button always called. No new upload endpoint.
+//
+// opts.auto = true  → called automatically right after Remove Background
+//                      resolves; errors are shown inline (non-blocking) so
+//                      processing can't get stuck behind an alert() the user
+//                      may not see (Studio can be left open in a background tab).
+// opts.auto = false → called from the manual button click; errors alert()
+//                      as before so the user gets an immediate, clear signal.
+async function pushToInventory(img, opts) {
+  opts = opts || {};
+  if (!img) return;
   if (!img.processed_url && !img.nobg_url) {
-    alert('Please process the image first.\n\n1. Click "Remove Background"\n2. Optionally apply a background\n3. Then click "Save to Inventory"');
+    if (!opts.auto) {
+      alert('Please process the image first.\n\n1. Click "Remove Background"\n2. Optionally apply a background\n3. Then click "Save to Inventory"');
+    }
     return;
   }
 
   const btn = document.getElementById('btnSaveToInventory');
-  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…'; }
+  if (btn) {
+    btn.disabled  = true;
+    btn.innerHTML = opts.auto
+      ? '<i class="fas fa-spinner fa-spin"></i> Uploading to Vehicle Images…'
+      : '<i class="fas fa-spinner fa-spin"></i> Saving…';
+  }
 
-  showOverlay('Saving to Inventory…', 'Updating your vehicle photo');
+  showOverlay(
+    opts.auto ? 'Uploading processed image…' : 'Saving to Inventory…',
+    opts.auto ? 'Adding it to your Vehicle Images gallery' : 'Updating your vehicle photo'
+  );
 
   try {
     const data = await safeFetchJSON('/studio/api/save-to-inventory', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image_id: img.id, vehicle_id: parseInt(VEHICLE_ID) })
+      body: JSON.stringify({
+        image_id:   img.id,
+        vehicle_id: parseInt(VEHICLE_ID),
+        is_primary: IS_PRIMARY_CONTEXT
+      })
     });
 
     hideOverlay();
-    flashSuccess('✅ Image saved! Your vehicle photo has been updated. You can close this tab.');
+    _autoSavedIds.add(img.id);
+    flashSuccess(data.is_primary
+      ? '✅ Background removed & saved as this vehicle\'s Primary photo. Gallery updated automatically.'
+      : '✅ Background removed & added to Vehicle Images gallery automatically.');
 
-    // Update button to show success state permanently
     if (btn) {
       btn.innerHTML = '<i class="fas fa-check-circle" style="color:#4caf50"></i> Saved to Inventory';
-      btn.style.background = '#1b5e20';
+      btn.style.background  = '#1b5e20';
       btn.style.borderColor = '#4caf50';
-      btn.disabled = true;
+      // Keep the button re-usable: if the user goes on to apply a
+      // background/composite and wants to push the updated version, they can.
+      btn.disabled = false;
+      setTimeout(() => {
+        if (btn.disabled) return;
+        btn.innerHTML = '<i class="fas fa-car" style="color:gold"></i> Update Inventory Photo';
+        btn.style.background  = '';
+        btn.style.borderColor = '';
+      }, 2500);
+    }
+
+    // Notify the Vehicle Images page (opened Studio in a new tab) so its
+    // gallery refreshes automatically — no manual reload required.
+    if (window.opener && !window.opener.closed) {
+      try {
+        window.opener.postMessage({
+          type: 'caryanams-studio-saved',
+          vehicle_id: VEHICLE_ID,
+          filename: data.filename
+        }, window.location.origin);
+      } catch (e) { /* cross-origin or closed opener — ignore, non-critical */ }
     }
   } catch (e) {
     hideOverlay();
     if (btn) {
-      btn.disabled = false;
+      btn.disabled  = false;
       btn.innerHTML = '<i class="fas fa-car" style="color:gold"></i> Save to Inventory';
     }
-    alert('Save failed: ' + e.message);
+    if (opts.auto) {
+      flashError('Background removed, but auto-upload to Vehicle Images failed: ' + e.message + '. Click "Save to Inventory" to retry.');
+    } else {
+      alert('Save failed: ' + e.message);
+    }
   }
+}
+
+// Called when the user clicks the "Save to Inventory" button directly.
+async function saveToInventory() {
+  const img = images[activeIdx];
+  if (!img) { alert('No image selected.'); return; }
+  await pushToInventory(img, { auto: false });
 }
 
 // ─── Collapse Sections ────────────────────────────────────────────────────────
@@ -994,6 +1069,16 @@ function flashSuccess(msg) {
   if (!fc) { fc = document.createElement('div'); fc.className = 'flash-container'; document.querySelector('.page-content').prepend(fc); }
   fc.appendChild(div);
   setTimeout(() => div.remove(), 5000);
+}
+
+function flashError(msg) {
+  const div = document.createElement('div');
+  div.className = 'flash flash-error';
+  div.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${msg} <button onclick="this.parentElement.remove()"><i class="fas fa-times"></i></button>`;
+  let fc = document.querySelector('.flash-container');
+  if (!fc) { fc = document.createElement('div'); fc.className = 'flash-container'; document.querySelector('.page-content').prepend(fc); }
+  fc.appendChild(div);
+  setTimeout(() => div.remove(), 8000);
 }
 </script>
 {% endblock %}
