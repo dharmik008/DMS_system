@@ -638,6 +638,19 @@
 // ── VEHICLE_ID — used by mask editor and image upload ────────────────────────
 const VEHICLE_ID = {{ vehicle['id'] }};
 
+// ── Studio integration: auto-refresh after background removal ────────────────
+// Caryanams Studio opens in a new tab (target="_blank"). Once it removes the
+// background and pushes the processed image to this vehicle via the existing
+// /studio/api/save-to-inventory endpoint, it posts a message back here so the
+// gallery reflects the new image automatically — no manual reload needed.
+window.addEventListener('message', function (event) {
+  if (event.origin !== window.location.origin) return;
+  const msg = event.data || {};
+  if (msg.type !== 'caryanams-studio-saved') return;
+  if (String(msg.vehicle_id) !== String(VEHICLE_ID)) return;
+  window.location.reload();
+});
+
 // ── images array — dynamically injected by Jinja ─────────────────────────
 const images = {{ all_imgs | select | list | tojson }};
 
