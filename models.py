@@ -430,16 +430,19 @@ class AdminLog(db.Model):
     # Numeric id of the acting user (users.id or sub_admins.id) when known.
     # Nullable — kept optional so existing call sites that don't pass it
     # keep working exactly as before.
-    user_id    = db.Column(db.Integer,     nullable=True)
+    # Indexed: user_id, ip_address, user_role, and module are the columns the
+    # unique-actor aggregation (admin.activity stats) groups by, so they're
+    # indexed to keep COUNT(DISTINCT ...) fast as the table grows.
+    user_id    = db.Column(db.Integer,     nullable=True, index=True)
     admin_user = db.Column(db.String(100), default='admin')
     # Super Admin | Sub Admin | Admin | Dealer
-    user_role  = db.Column(db.String(30),  default='Admin')
+    user_role  = db.Column(db.String(30),  default='Admin', index=True)
     action     = db.Column(db.String(255), nullable=False)
-    module     = db.Column(db.String(50),  default='System')
+    module     = db.Column(db.String(50),  default='System', index=True)
     # Optional longer-form description shown in the expanded row / export.
     # Falls back to `action` everywhere it's displayed when blank.
     description = db.Column(db.Text,       nullable=True)
-    ip_address = db.Column(db.String(45),  default='127.0.0.1')
+    ip_address = db.Column(db.String(45),  default='127.0.0.1', index=True)
     device     = db.Column(db.String(20),  nullable=True)   # Desktop | Mobile | Tablet
     browser    = db.Column(db.String(80),  nullable=True)   # Chrome | Firefox | Safari …
     # IANA-style label of the timezone timestamps are stored in (always IST here)
@@ -852,21 +855,24 @@ class VisitorLog(db.Model):
     __tablename__ = 'visitor_logs'
 
     id               = db.Column(db.Integer,     primary_key=True)
-    ip_address       = db.Column(db.String(45),  nullable=False, default='unknown')
+    # Indexed: ip_address, device_type, session_id, and user_id are the four
+    # columns the unique-visitor aggregation (admin.visitor_logs stats) groups
+    # by, so they're indexed to keep COUNT(DISTINCT ...) fast as the table grows.
+    ip_address       = db.Column(db.String(45),  nullable=False, default='unknown', index=True)
     country          = db.Column(db.String(100), nullable=True)
     city             = db.Column(db.String(100), nullable=True)
     browser          = db.Column(db.String(80),  nullable=True)
     operating_system = db.Column(db.String(80),  nullable=True)
-    device_type      = db.Column(db.String(20),  nullable=True)   # Desktop / Mobile / Tablet
+    device_type      = db.Column(db.String(20),  nullable=True, index=True)   # Desktop / Mobile / Tablet
     page_url         = db.Column(db.String(500), nullable=True)
     referrer         = db.Column(db.String(500), nullable=True)
     # Stable anonymous id grouping multiple page visits from the same browser session.
-    session_id       = db.Column(db.String(64),  nullable=True)
+    session_id       = db.Column(db.String(64),  nullable=True, index=True)
     # If the visitor was logged in at the time of this page view (dealer/user
     # account), their identity is captured here — nullable, since most public
     # visitors are anonymous. Lets the Visitor Logs page show WHO a visit
     # belongs to, not just where it came from.
-    user_id          = db.Column(db.Integer,     nullable=True)
+    user_id          = db.Column(db.Integer,     nullable=True, index=True)
     visitor_name     = db.Column(db.String(100), nullable=True)
     visitor_role     = db.Column(db.String(30),  nullable=True)   # Dealer | User
     visited_at       = db.Column(db.DateTime,    default=_now_ist)
