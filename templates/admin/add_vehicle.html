@@ -97,11 +97,12 @@
           id="admin_reg_number"
           placeholder="e.g. GJ 06 AB 1234"
           oninput="formatNumberPlate(this)"
-          onblur="formatNumberPlate(this)"
+          onblur="formatNumberPlate(this); validatePlateNumber(this, document.getElementById('adminRegNumberError'));"
           autocomplete="off"
           style="text-transform:uppercase;letter-spacing:2px;font-weight:700;font-family:monospace;font-size:15px;"
           value="{{ form.get('reg_number','') if form else '' }}">
         <small style="color:#6b7280;font-size:11px;">Auto-formatted: GJ 06 AB 1234</small>
+        <small id="adminRegNumberError" style="display:none;font-size:11px;color:#dc2626;font-weight:600;">Please enter a valid vehicle number in the format: GJ 01 AB 1234 or GJ 01 ABC 1234</small>
       </div>
       <div class="form-group" style="grid-column:1/-1;">
         <label>Description</label>
@@ -362,6 +363,37 @@ function formatNumberPlate(input) {
 document.addEventListener('DOMContentLoaded', function() {
   var rf = document.getElementById('admin_reg_number');
   if (rf && rf.value) formatNumberPlate(rf);
+});
+
+/* ── Strict Registration Number Validation ────────────────────────────────
+   Required format: SS DD LL 1234  or  SS DD LLL 1234 (regex below).
+   Empty value is treated as valid here since this field has no `required`
+   attribute; only the format of a non-empty value is enforced.
+──────────────────────────────────────────────────────────────────────────── */
+var PLATE_REGEX = /^[A-Z]{2}\s\d{2}\s[A-Z]{2,3}\s\d{4}$/;
+
+function validatePlateNumber(input, errEl) {
+  var val = input.value.trim().toUpperCase();
+  input.value = val;
+  var isValid = val === '' || PLATE_REGEX.test(val);
+  if (errEl) { errEl.style.display = isValid ? 'none' : 'block'; }
+  input.style.borderColor = isValid ? '' : '#ef4444';
+  return isValid;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  var addForm = document.getElementById('addVehicleForm');
+  if (addForm) {
+    addForm.addEventListener('submit', function(e) {
+      var rf = document.getElementById('admin_reg_number');
+      var errEl = document.getElementById('adminRegNumberError');
+      if (rf && !validatePlateNumber(rf, errEl)) {
+        e.preventDefault();
+        rf.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        rf.focus();
+      }
+    });
+  }
 });
 </script>
 {% endblock %}
