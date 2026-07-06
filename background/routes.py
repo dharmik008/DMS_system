@@ -658,6 +658,14 @@ def save_to_inventory():
         data       = request.get_json(silent=True) or {}
         image_id   = data.get('image_id')
         vehicle_id = data.get('vehicle_id')
+        # FEATURE: Studio -> Vehicle Images auto-integration.
+        # Callers (background/remove.html) pass is_primary=true only when the
+        # Studio session was opened from the "Current Primary Photo" slot, so a
+        # background-removed replacement keeps that slot's Primary status.
+        # Generic "Additional Gallery Photos" Studio links omit it (defaults to
+        # False) so newly processed images are added to the gallery WITHOUT
+        # silently stealing the Primary spot from whatever photo already holds it.
+        is_primary = bool(data.get('is_primary', False))
 
         if not image_id or not vehicle_id:
             return jsonify({'error': 'image_id and vehicle_id are required'}), 400
@@ -676,6 +684,11 @@ def save_to_inventory():
         if not vehicle:
             return jsonify({'error': f'Vehicle {vehicle_id} not found'}), 404
 
+        # A vehicle with no real primary photo yet should still get one set
+        # automatically the first time a Studio image is pushed to it.
+        no_primary_yet = not vehicle.image_filename or vehicle.image_filename in ('default_car.jpg', 'None', '')
+        should_set_primary = is_primary or no_primary_yet
+
         # Copy into uploads folder with a unique filename
         upload_folder = os.path.join(current_app.root_path, 'static', 'images', 'uploads')
         os.makedirs(upload_folder, exist_ok=True)
@@ -691,8 +704,9 @@ def save_to_inventory():
             filename=new_fname  # new_fname is always unique (uuid), so check via image_id tag
         ).first()
 
-        # Update the vehicle primary image
-        vehicle.image_filename = new_fname
+        # Only touch the vehicle's Primary slot when appropriate (see comment above)
+        if should_set_primary:
+            vehicle.image_filename = new_fname
         db.session.flush()
 
         # Also register in VehicleImage gallery for multi-image display
@@ -709,8 +723,9 @@ def save_to_inventory():
             os.rename(dest_path, tagged_dest)
             new_fname = studio_tag_fname
 
-            # Update primary image to tagged name
-            vehicle.image_filename = new_fname
+            # Update primary image to tagged name (only if this is the primary slot)
+            if should_set_primary:
+                vehicle.image_filename = new_fname
 
             # Add to gallery
             gallery_entry = VehicleImage(
@@ -723,10 +738,11 @@ def save_to_inventory():
         db.session.commit()
 
         return jsonify({
-            'ok':         True,
-            'filename':   new_fname,
-            'image_url':  f'/static/images/uploads/{new_fname}',
-            'vehicle_id': vehicle_id,
+            'ok':          True,
+            'filename':    new_fname,
+            'image_url':   f'/static/images/uploads/{new_fname}',
+            'vehicle_id':  vehicle_id,
+            'is_primary':  should_set_primary,
         }), 200
 
     except Exception as exc:
