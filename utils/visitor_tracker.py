@@ -100,7 +100,7 @@ _ENDPOINT_PAGE_NAMES = {
     'auth.register':                'Register',
     'auth.role_select':             'Role Select',
     'auth.forgot_password':         'Forgot Password',
-    'auth.dealer_login':            'Dealer Login',
+    'auth.minisite_login':          'Minisite User Login',
     'auth.dealer_register':         'Dealer Register',
     'auth.logout':                  'Logout',
     # User-facing
