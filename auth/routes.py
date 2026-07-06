@@ -284,18 +284,18 @@ def dealer_register(website_name):
             user_create(user_data)
 
         flash(f'Registration successful! You were registered via {dealer.website_name or dealer.name}. Please login.', 'success')
-        return redirect(url_for('auth.dealer_login', website_name=website_name))
+        return redirect(url_for('auth.minisite_login', website_name=website_name))
 
     return render_template('auth/dealer_register.html', dealer=dealer, website_name=website_name)
 
 
-@auth_bp.route('/dealer-login/<website_name>', methods=['GET', 'POST'])
-def dealer_login(website_name):
+@auth_bp.route('/minisite-login/<website_name>', methods=['GET', 'POST'])
+def minisite_login(website_name):
     """
-    Dealer-link login page.
-    When someone opens a dealer's shared link, they login here.
-    Only users registered via this dealer link (or the dealer themselves) can login.
-    The dealer's branding is shown on the page.
+    Mini-website login page.
+    When a visitor opens a dealer's mini-website and clicks Login, they land
+    here. This page supports **User Login only** — dealer accounts are not
+    authenticated through the mini-website and must use the main DMS login.
     """
     from models import User
     dealer = User.query.filter(
@@ -308,7 +308,7 @@ def dealer_login(website_name):
             User.name.ilike(website_name)
         ).first()
     if not dealer:
-        flash('Invalid dealer link.', 'error')
+        flash('Invalid website link.', 'error')
         return redirect(url_for('auth.login'))
 
     if request.method == 'POST':
@@ -318,26 +318,28 @@ def dealer_login(website_name):
         user = user_get_by_email(email)
 
         if user and user.check_password(password):
-            if user.role == 'dealer' and not user.is_active:
-                flash('Your account has been suspended.', 'error')
-                return render_template('auth/dealer_login.html', dealer=dealer, website_name=website_name)
+            if user.role != 'user':
+                # Dealer/admin accounts are not permitted to log in via the mini-website.
+                _log_auth_action(
+                    'Blocked non-user login attempt', 'Auth', status='Failed', user=user,
+                    description=f'Non-user account "{email}" attempted mini-website login via {website_name}'
+                )
+                flash('This login is for customer accounts only. Dealers should use the main DMS login.', 'error')
+                return render_template('auth/minisite_login.html', dealer=dealer, website_name=website_name)
+
             session['user_id']   = user.id
             session['user_role'] = user.role
             flash('Login successful!', 'success')
-            role_label = 'Dealer' if user.role == 'dealer' else 'Admin'
-            _log_auth_action(f'{role_label} logged in via dealer link ({website_name})', 'Auth', user=user)
-            # Redirect dealer to their own dashboard; users to minisite
-            if user.role == 'dealer':
-                return redirect(url_for('dealer.dashboard'))
-            return redirect(url_for('minisite.home', website_name=website_name))
+            _log_auth_action(f'User logged in via mini-website ({website_name})', 'Auth', user=user)
+            return redirect(url_for('minisite.home', dealer_name=dealer.name, website_name=website_name))
         else:
             _log_auth_action(
                 'Failed login attempt', 'Auth', status='Failed', user=user,
-                description=f'Failed dealer-link login attempt for email "{email}" via {website_name}'
+                description=f'Failed mini-website login attempt for email "{email}" via {website_name}'
             )
             flash('Invalid email or password.', 'error')
 
-    return render_template('auth/dealer_login.html', dealer=dealer, website_name=website_name)
+    return render_template('auth/minisite_login.html', dealer=dealer, website_name=website_name)
 
 
 @auth_bp.route('/forgot-password', methods=['GET', 'POST'])
