@@ -1,0 +1,22 @@
+<!-- ══════════════════════════════════════════════════════════════════════
+     Caryanams Reusable Image Lightbox — markup only.
+     Behaviour: static/js/lightbox.js · Styles: static/css/lightbox.css
+     Included once in templates/user/base.html so every user-facing page
+     (home, listings, car detail) can open it via `CYLightbox.open(...)`.
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="cyLightbox" class="cy-lb-overlay" role="dialog" aria-modal="true" aria-label="Image viewer">
+  <div id="cyLbStage" class="cy-lb-stage">
+    <img id="cyLbImg" class="cy-lb-img" src="" alt="Car photo">
+  </div>
+  <button type="button" id="cyLbClose" class="cy-lb-close" aria-label="Close">
+    <i class="fas fa-times"></i>
+  </button>
+  <button type="button" id="cyLbPrev" class="cy-lb-arrow cy-lb-prev" aria-label="Previous image">
+    <i class="fas fa-chevron-left"></i>
+  </button>
+  <button type="button" id="cyLbNext" class="cy-lb-arrow cy-lb-next" aria-label="Next image">
+    <i class="fas fa-chevron-right"></i>
+  </button>
+  <div id="cyLbCounter" class="cy-lb-counter"></div>
+  <div class="cy-lb-hint">Scroll or double-click to zoom</div>
+</div>
