@@ -18,6 +18,7 @@
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px;">
   {% for label, val, color, stat_key in [
       ('Total Visits', stats.total, 'var(--accent)', 'total'),
+      ('Total Users', stats.users, '#ff6b9d', 'users'),
       ('Desktop', stats.desktop, '#6366f1', 'desktop'),
       ('Mobile', stats.mobile, '#22c55e', 'mobile'),
       ('Tablet', stats.tablet, '#f59e0b', 'tablet'),
