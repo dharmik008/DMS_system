@@ -92,10 +92,11 @@
               placeholder="e.g. GJ 06 AB 1234 or MH 12 ABC 1234"
               value="{{ vehicle['registration_number'] if vehicle else '' }}"
               oninput="formatNumberPlate(this)"
-              onblur="formatNumberPlate(this)"
+              onblur="formatNumberPlate(this); validatePlateNumber(this, document.getElementById('regNumberError'));"
               autocomplete="off"
               style="text-transform:uppercase;letter-spacing:2px;font-weight:700;font-family:monospace;font-size:15px;">
             <small style="font-size:11px;color:var(--text-muted)">Auto-formatted · Standard: GJ 06 AB 1234 · New-series: MH 12 ABC 1234</small>
+            <small id="regNumberError" style="display:none;font-size:11px;color:#dc2626;font-weight:600;">Please enter a valid vehicle number in the format: GJ 01 AB 1234 or GJ 01 ABC 1234</small>
           </div>
           <div class="form-group">
             <label>VIN / Chassis Number</label>
@@ -436,7 +437,7 @@
                  onerror="this.style.display='none'">
             <div style="font-size:11px;color:#6b7280">
               Current primary photo<br>
-              <a href="{{ url_for('background.background_removal') }}?vehicle_id={{ vehicle['id'] }}" target="_blank"
+              <a href="{{ url_for('background.background_removal') }}?vehicle_id={{ vehicle['id'] }}&primary=1" target="_blank"
                  style="display:inline-flex;align-items:center;gap:5px;margin-top:5px;
                         padding:4px 10px;background:linear-gradient(135deg,#0f2444,#1e3a5f);
                         color:#fff;border-radius:6px;font-size:11px;font-weight:700;text-decoration:none">
@@ -495,6 +496,22 @@
 
 {% block extra_js %}
 <script>
+/* ── Studio integration: auto-refresh after background removal ─────────────
+   Caryanams Studio opens in a new tab (target="_blank"). Once it finishes
+   removing the background and pushes the processed image to this vehicle
+   via the existing /studio/api/save-to-inventory endpoint, it posts a
+   message back here so the Vehicle Images / Primary Photo section reflects
+   the new image without the user needing to manually reload the page. */
+window.addEventListener('message', function (event) {
+  if (event.origin !== window.location.origin) return;
+  var msg = event.data || {};
+  if (msg.type !== 'caryanams-studio-saved') return;
+  {% if vehicle %}
+  if (String(msg.vehicle_id) !== String({{ vehicle['id'] }})) return;
+  {% endif %}
+  window.location.reload();
+});
+
 /* ── Number Plate Formatter ─────────────────────────────────────────────────
    Supports both standard and new-series Indian registration formats:
      Standard : GJ 06 AB 1234   (2-letter state · 1-2 digit RTO · 2-letter series · 4 digits)
@@ -571,6 +588,27 @@ document.addEventListener('DOMContentLoaded', function() {
     formatNumberPlate(regField);
   }
 });
+
+/* ── Strict Registration Number Validation ────────────────────────────────
+   Required format: SS DD LL 1234  or  SS DD LLL 1234
+     SS   = exactly 2 uppercase letters (state code)
+     DD   = exactly 2 digits (RTO code) — mandatory, always present
+     LL/LLL = 2 or 3 uppercase letters (series code)
+     1234 = exactly 4 digits
+   Leading/trailing spaces are trimmed and the value is uppercased before
+   testing. Empty value is treated as valid here since this field is optional;
+   the required attribute (if any) still governs whether it must be filled.
+──────────────────────────────────────────────────────────────────────────── */
+var PLATE_REGEX = /^[A-Z]{2}\s\d{2}\s[A-Z]{2,3}\s\d{4}$/;
+
+function validatePlateNumber(input, errEl) {
+  var val = input.value.trim().toUpperCase();
+  input.value = val;
+  var isValid = val === '' || PLATE_REGEX.test(val);
+  if (errEl) { errEl.style.display = isValid ? 'none' : 'block'; }
+  input.style.borderColor = isValid ? '' : '#ef4444';
+  return isValid;
+}
 
 const VEHICLE_ID = {{ vehicle['id'] if vehicle and vehicle.get('id') else 'null' }};
 let vphGalleryFiles = [];
@@ -773,6 +811,15 @@ const VPH_REQUIRED_SLOTS = [
 ];
 
 function vphSubmitForm() {
+  // Strict plate-number validation before anything else
+  const regField = document.getElementById('reg_number_field');
+  const regErrEl = document.getElementById('regNumberError');
+  if (regField && !validatePlateNumber(regField, regErrEl)) {
+    regField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    regField.focus();
+    return; // Block submission
+  }
+
   const missing = [];
 
   VPH_REQUIRED_SLOTS.forEach(slot => {
