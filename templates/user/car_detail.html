@@ -7,7 +7,7 @@
 /* ── Image URL helper macro ── */
 /* Gallery */
 .gallery-wrap { position: relative; background: linear-gradient(135deg,var(--navy-dark),var(--navy-mid)); border-radius: var(--radius-lg); overflow: hidden; }
-.gallery-main-img { width: 100%; aspect-ratio: 16/10; object-fit: cover; display: block; transition: opacity .22s; }
+.gallery-main-img { width: 100%; aspect-ratio: 16/10; object-fit: cover; display: block; transition: opacity .22s; cursor: zoom-in; }
 .gallery-placeholder { width: 100%; aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; }
 .gallery-placeholder i { font-size: 72px; color: rgba(255,255,255,.15); }
 .gallery-counter { position: absolute; bottom: 14px; right: 16px; background: rgba(0,0,0,.55); color: #fff; font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 20px; display: flex; align-items: center; gap: 6px; }
@@ -125,7 +125,11 @@
         <img class="gallery-main-img" id="mainImgEl"
              src="{{ all_imgs[0] }}"
              alt="{{ vehicle.year }} {{ vehicle.make }} {{ vehicle.model }}"
+             onclick="openMainLightbox()"
              onerror="this.onerror=null;this.src='{{ default_img }}'">
+        <div class="gallery-zoom-hint" style="position:absolute;top:14px;left:16px;background:rgba(0,0,0,.5);color:#fff;font-size:11px;font-weight:600;padding:5px 10px;border-radius:20px;display:flex;align-items:center;gap:5px;pointer-events:none">
+          <i class="fas fa-expand"></i> Click to enlarge
+        </div>
         {% if all_imgs | length > 1 %}
           <button class="gallery-arr prev" onclick="galStep(-1)"><i class="fas fa-chevron-left"></i></button>
           <button class="gallery-arr next" onclick="galStep(1)"><i class="fas fa-chevron-right"></i></button>
@@ -399,6 +403,18 @@ function galGoto(idx) {
   document.querySelectorAll('.g-thumb')[galIdx]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
 }
 function galStep(dir) { galGoto(galIdx + dir); }
+
+// ── Full-screen lightbox (click main image to inspect in detail) ──────────
+// Reuses the same image set (galImgs) and current position (galIdx) the
+// gallery already tracks, so prev/next inside the lightbox stays in sync
+// with the thumbnail strip underneath once it's closed.
+function openMainLightbox() {
+  if (typeof CYLightbox === 'undefined' || !galImgs.length) return;
+  CYLightbox.open(galImgs, galIdx, {
+    alt: document.getElementById('mainImgEl') ? document.getElementById('mainImgEl').alt : '',
+    onChange: function (i) { galGoto(i); }
+  });
+}
 
 // Touch swipe
 let tsX = 0;
