@@ -968,6 +968,16 @@ body {
     border-radius: 0 !important;
     font-size: 15px !important;
   }
+  .ms-nav-links.open .ms-mobile-auth {
+    display: block !important;
+    border-top: 1px solid var(--border, #e2e8f0) !important;
+    margin-top: 8px !important;
+    padding-top: 8px !important;
+  }
+  .ms-mobile-auth-link {
+    padding: 12px 20px !important;
+    font-size: 15px !important;
+  }
   .ms-hamburger {
     display: flex !important;
     align-items: center;
