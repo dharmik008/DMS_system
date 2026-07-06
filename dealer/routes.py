@@ -526,7 +526,10 @@ def edit_vehicle(vid):
                         sort_order=sort_idx
                     )
                     db.session.add(img_rec)
-                # If updating front image, also update the primary image_filename
+                # Inventory card must always show the Front image — only sync
+                # the primary/cover image when the Front slot itself was
+                # updated; other categories (rear, sides, boot, engine,
+                # interior) must never change the Inventory card.
                 if img_type == 'front':
                     update_data['image_filename'] = fname
                 saved_any = True
@@ -639,6 +642,7 @@ def upload_vehicle_images():
     # Falls back to 'gallery' for all files if not provided
     image_types = request.form.getlist('image_types')
     saved = []
+    front_fname = None  # only the Front slot should ever become the primary/cover image
     MAX_FILES = 15
     ALLOWED = {'jpg', 'jpeg', 'png', 'webp'}  # webp accepted then converted
 
@@ -689,9 +693,18 @@ def upload_vehicle_images():
             )
             db.session.add(img_rec)
             saved.append({'filename': fname, 'image_type': img_type})
+            if img_type == 'front':
+                front_fname = fname
 
         if saved:
             db.session.commit()
+
+        # Inventory card must always show the Front image — only sync the
+        # primary/cover image when the Front slot itself was uploaded here.
+        if front_fname:
+            from db import execute
+            execute("UPDATE vehicles SET image_filename=%s WHERE id=%s",
+                    (front_fname, vehicle_id))
 
         filenames = [s['filename'] for s in saved]
         return jsonify({'success': True, 'filenames': filenames,
@@ -791,8 +804,10 @@ def replace_vehicle_image():
                 vi.image_type = img_type
                 db.session.commit()
 
-                # If this was the primary image, update vehicle record too
-                if vehicle.get('image_filename') == vi.filename:
+                # Inventory card must always show the Front image — only
+                # sync the primary/cover image when the Front slot is the
+                # one being replaced; other categories must not affect it.
+                if img_type == 'front':
                     from db import execute
                     execute("UPDATE vehicles SET image_filename=%s WHERE id=%s",
                             (new_fname, vehicle_id))
@@ -820,6 +835,14 @@ def replace_vehicle_image():
             image_type=img_type, sort_order=sort_val)
         db.session.add(img_rec)
         db.session.commit()
+
+        # Inventory card must always show the Front image — only sync the
+        # primary/cover image when the Front slot itself was replaced.
+        if img_type == 'front':
+            from db import execute
+            execute("UPDATE vehicles SET image_filename=%s WHERE id=%s",
+                    (fname, vehicle_id))
+
         return jsonify({'success': True, 'filename': fname})
 
     except Exception as e:
@@ -1557,7 +1580,7 @@ def activate_subscription():
         return jsonify({'success': False, 'error': 'Invalid plan selected.'}), 400
 
     dealer_id   = get_dealer_id()
-    dealer_name = g.user.name if g.user else ''
+    dealer_name = g.user.get('name', '') if g.user else ''
 
     razorpay_enabled = current_app.config.get('RAZORPAY_ENABLED', False)
 
