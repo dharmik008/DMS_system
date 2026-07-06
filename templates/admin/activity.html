@@ -90,8 +90,17 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
     </div>
     <div>
-      <div class="al-stat-val">{{ total }}</div>
+      <div class="al-stat-val" data-stat="total">{{ total }}</div>
       <div class="al-stat-lbl">Total Events</div>
+    </div>
+  </div>
+  <div class="al-stat">
+    <div class="al-stat-icon" style="background:rgba(255,107,157,0.12);color:#ff6b9d;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    </div>
+    <div>
+      <div class="al-stat-val" data-stat="unique_users">{{ unique_users }}</div>
+      <div class="al-stat-lbl">Unique Users</div>
     </div>
   </div>
   <div class="al-stat">
@@ -99,8 +108,8 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
     </div>
     <div>
-      <div class="al-stat-val">{{ total_pages }}</div>
-      <div class="al-stat-lbl">Pages</div>
+      <div class="al-stat-val" data-stat="modules_tracked">{{ modules_tracked }}</div>
+      <div class="al-stat-lbl">Modules Tracked</div>
     </div>
   </div>
   <div class="al-stat">
@@ -108,7 +117,7 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
     </div>
     <div>
-      <div class="al-stat-val">4</div>
+      <div class="al-stat-val" data-stat="roles_tracked">{{ roles_tracked }}</div>
       <div class="al-stat-lbl">Roles Tracked</div>
     </div>
   </div>
@@ -708,7 +717,18 @@ document.getElementById('filterForm').addEventListener('submit', function(e) {
     fetch(url, {credentials:'same-origin'})
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(data) {
-        if (!data || !data.success || !data.rows.length) return;
+        if (!data || !data.success) return;
+
+        // Always refresh the stat cards (Total / Unique Users / Modules / Roles),
+        // even when there are no new rows since the last poll.
+        if (data.stats) {
+          document.querySelectorAll('[data-stat]').forEach(function(el){
+            var key = el.dataset.stat;
+            if (data.stats[key] !== undefined) el.textContent = data.stats[key];
+          });
+        }
+
+        if (!data.rows.length) return;
         var tbody = document.querySelector('#activityTable tbody');
         if (!tbody) return;
 
@@ -723,10 +743,6 @@ document.getElementById('filterForm').addEventListener('submit', function(e) {
           tbody.insertAdjacentHTML('afterbegin', _buildRow(log));
           if (log.id > maxId) maxId = log.id;
         });
-
-        // Update the total-records stat card (first .al-stat-val)
-        var statEl = document.querySelector('.al-stat-val');
-        if (statEl) statEl.textContent = data.total;
       })
       .catch(function(){});
   }
