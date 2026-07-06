@@ -31,6 +31,10 @@
     .btn-outline:hover{background:var(--primary);color:#fff}
     .btn-danger{background:#ef4444;color:#fff}
     .ms-hamburger{display:none;background:none;border:none;font-size:22px;cursor:pointer;color:var(--dark)}
+    .ms-mobile-auth{display:none}
+    .ms-mobile-auth-link{display:flex;align-items:center;gap:10px;padding:12px 20px;font-size:15px;font-weight:500;border-radius:0}
+    .ms-mobile-auth-login{color:var(--primary)}
+    .ms-mobile-auth-logout{color:#ef4444}
     .ms-footer{background:var(--dark);color:#94a3b8;margin-top:80px}
     .ms-footer-inner{max-width:1200px;margin:0 auto;padding:48px 24px 24px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:40px}
     .ms-footer h4{color:#fff;font-size:15px;font-weight:700;margin-bottom:16px}
@@ -70,7 +74,7 @@
     .pagination .current{background:var(--primary);color:#fff;border-color:var(--primary)}
     .wa-float{position:fixed;bottom:28px;right:28px;z-index:200;background:#25d366;color:#fff;width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:26px;box-shadow:0 6px 20px rgba(37,211,102,.45);transition:transform .2s}
     .wa-float:hover{transform:scale(1.1)}
-    @media(max-width:768px){.ms-nav-links{display:none}.ms-hamburger{display:block}.ms-nav-links.open{display:flex;flex-direction:column;position:absolute;top:68px;left:0;right:0;background:#fff;padding:12px 0;box-shadow:0 8px 20px rgba(0,0,0,.1)}.ms-footer-inner{grid-template-columns:1fr}.car-grid{grid-template-columns:1fr 1fr}}
+    @media(max-width:768px){.ms-nav-links{display:none}.ms-hamburger{display:block}.ms-nav-links.open{display:flex;flex-direction:column;position:absolute;top:68px;left:0;right:0;background:#fff;padding:12px 0;box-shadow:0 8px 20px rgba(0,0,0,.1)}.ms-nav-links.open .ms-mobile-auth{display:block;border-top:1px solid var(--border);margin-top:8px;padding-top:8px}.ms-footer-inner{grid-template-columns:1fr}.car-grid{grid-template-columns:1fr 1fr}}
     @media(max-width:480px){.car-grid{grid-template-columns:1fr}}
   </style>
   {% block extra_css %}{% endblock %}
@@ -86,6 +90,7 @@
 
 <nav class="ms-nav">
   <div class="ms-nav-inner">
+    {% set _ms_return = request.full_path[:-1] if request.full_path.endswith('?') else request.full_path %}
     <a href="{{ url_for('minisite.home', dealer_name=dealer.name, website_name=website_name)  }}" class="ms-logo">
       {% if logo_type == 'image' %}
         <img src="{{ url_for('static', filename='images/uploads/' ~ logo_value) }}" alt="Logo" />
@@ -105,9 +110,19 @@
       <a href="{{ url_for('minisite.featured_deals', dealer_name=dealer.name, website_name=website_name)  }}" class="{{ 'active' if request.endpoint == 'minisite.featured_deals' else '' }}">Deals</a>
       <a href="{{ url_for('minisite.about', dealer_name=dealer.name, website_name=website_name)  }}" class="{{ 'active' if request.endpoint == 'minisite.about' else '' }}">About Us</a>
       <a href="{{ url_for('minisite.contact', dealer_name=dealer.name, website_name=website_name)  }}" class="{{ 'active' if request.endpoint == 'minisite.contact' else '' }}">Contact</a>
+      <div class="ms-mobile-auth">
+        {% if current_user %}
+        <a href="{{ url_for('auth.logout', returnUrl=_ms_return) }}" class="ms-mobile-auth-link ms-mobile-auth-logout">
+          <i class="fas fa-sign-out-alt"></i> Logout
+        </a>
+        {% else %}
+        <a href="{{ url_for('auth.minisite_login', website_name=website_name) }}" class="ms-mobile-auth-link ms-mobile-auth-login">
+          <i class="fas fa-sign-in-alt"></i> Login
+        </a>
+        {% endif %}
+      </div>
     </div>
     <div class="ms-nav-cta">
-      {% set _ms_return = request.full_path[:-1] if request.full_path.endswith('?') else request.full_path %}
       {% if dealer.whatsapp_number %}
       <a href="https://wa.me/91{{ dealer.whatsapp_number | replace('+91','') | replace(' ','') }}" target="_blank" class="btn btn-whatsapp">
         <i class="fab fa-whatsapp"></i> WhatsApp
