@@ -1,0 +1,141 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Caryanams Reusable Image Lightbox
+   Full-screen viewer for car images — used on the car detail gallery and on
+   listing/home card thumbnails. Self-contained: markup lives in
+   templates/_image_lightbox.html, behaviour in static/js/lightbox.js.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.cy-lb-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 14, 26, 0.82);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .25s ease, visibility .25s ease;
+  padding: 24px;
+  box-sizing: border-box;
+}
+.cy-lb-overlay.cy-lb-open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.cy-lb-stage {
+  position: relative;
+  max-width: 92vw;
+  max-height: 88vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: scale(.96);
+  transition: transform .25s ease;
+  overflow: hidden;
+}
+.cy-lb-overlay.cy-lb-open .cy-lb-stage {
+  transform: scale(1);
+}
+
+.cy-lb-img {
+  max-width: 92vw;
+  max-height: 88vh;
+  object-fit: contain;
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  cursor: zoom-in;
+  transition: transform .18s ease;
+  transform: scale(1) translate(0px, 0px);
+  will-change: transform;
+}
+.cy-lb-img.cy-lb-zoomed { cursor: grab; }
+.cy-lb-img.cy-lb-dragging { cursor: grabbing; transition: none; }
+
+.cy-lb-close,
+.cy-lb-arrow {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255,255,255,.18);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .18s ease, transform .12s ease;
+}
+.cy-lb-close:hover,
+.cy-lb-arrow:hover { background: rgba(0, 0, 0, 0.75); }
+.cy-lb-close:active,
+.cy-lb-arrow:active { transform: scale(.92); }
+
+.cy-lb-close {
+  top: 18px;
+  right: 22px;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  font-size: 20px;
+  z-index: 2;
+}
+
+.cy-lb-arrow {
+  top: 50%;
+  transform: translateY(-50%);
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  font-size: 18px;
+  z-index: 2;
+}
+.cy-lb-arrow.cy-lb-prev { left: 18px; }
+.cy-lb-arrow.cy-lb-next { right: 18px; }
+.cy-lb-arrow:active { transform: translateY(-50%) scale(.92); }
+
+.cy-lb-counter {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,.5);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 20px;
+  z-index: 2;
+}
+
+.cy-lb-hint {
+  position: absolute;
+  bottom: 18px;
+  right: 22px;
+  color: rgba(255,255,255,.55);
+  font-size: 11px;
+  z-index: 2;
+  display: none;
+}
+@media (min-width: 769px) {
+  .cy-lb-hint { display: block; }
+}
+
+/* Mobile tweaks */
+@media (max-width: 768px) {
+  .cy-lb-overlay { padding: 10px; }
+  .cy-lb-close { top: 10px; right: 10px; width: 38px; height: 38px; font-size: 18px; }
+  .cy-lb-arrow { width: 40px; height: 40px; font-size: 16px; }
+  .cy-lb-arrow.cy-lb-prev { left: 8px; }
+  .cy-lb-arrow.cy-lb-next { right: 8px; }
+  .cy-lb-counter { bottom: 10px; font-size: 12px; }
+}
+
+/* Cue that a card/gallery image is openable in the lightbox */
+.cy-lb-trigger { cursor: zoom-in; }
+
+body.cy-lb-locked { overflow: hidden; }
