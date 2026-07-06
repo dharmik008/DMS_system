@@ -22,8 +22,52 @@ def _now_ist():
 import csv
 import os
 import random
+from sqlalchemy import func, case, cast, String
 
 admin_bp = Blueprint('admin', __name__)
+
+
+# ─── Unique-visitor / unique-actor aggregation helpers ────────────────────────
+# These build a single SQL expression that identifies "one person" instead of
+# "one row", so COUNT(DISTINCT ...) on it gives real unique users rather than
+# inflated page-view / action counts. Nothing about existing row storage
+# changes -- every page view and every action is still written exactly as
+# before; only how the dashboard stat cards *summarize* those rows changes.
+# Built with the `+` string-concat operator (compiles to `||` on both SQLite
+# and PostgreSQL) rather than func.concat(), which SQLite has no builtin for.
+def _visitor_unique_key_expr():
+    """
+    Priority order for identifying a unique visitor on VisitorLog rows:
+      1. Logged-in user_id (best -- same person across devices counts once)
+      2. Fallback: ip_address + device_type + session_id combo
+    """
+    from models import VisitorLog
+    anon_key = (
+        func.coalesce(VisitorLog.ip_address, '') + '|' +
+        func.coalesce(VisitorLog.device_type, '') + '|' +
+        func.coalesce(VisitorLog.session_id, '')
+    )
+    return case(
+        (VisitorLog.user_id.isnot(None), 'u:' + cast(VisitorLog.user_id, String)),
+        else_=('a:' + anon_key)
+    )
+
+
+def _activity_unique_key_expr():
+    """
+    Priority order for identifying a unique actor on AdminLog rows:
+      1. user_id (best -- same person across sessions counts once)
+      2. Fallback: ip_address + user_role combo
+    """
+    from models import AdminLog
+    anon_key = (
+        func.coalesce(AdminLog.ip_address, '') + '|' +
+        func.coalesce(AdminLog.user_role, '')
+    )
+    return case(
+        (AdminLog.user_id.isnot(None), 'u:' + cast(AdminLog.user_id, String)),
+        else_=('a:' + anon_key)
+    )
 
 # ─── Admin Credentials ────────────────────────────────────────────────────────
 ADMIN_CREDS = {
@@ -1796,20 +1840,33 @@ def activity():
             (AdminLog.ip_address.ilike(like))
         )
 
-    q = q.order_by(AdminLog.created_at.desc())
-    total         = q.count()
+    # Keep the filtered-but-unordered query for aggregate stats — computing
+    # COUNT(DISTINCT ...) against it (rather than the whole table) makes the
+    # stat cards respect whatever role/module/date/search filter is active,
+    # same as `total` does.
+    base_q        = q
+    total         = base_q.count()
     total_pages   = max(1, (total + per_page - 1) // per_page)
     page          = min(page, total_pages)
-    logs          = q.offset((page - 1) * per_page).limit(per_page).all()
+    logs          = base_q.order_by(AdminLog.created_at.desc()) \
+                           .offset((page - 1) * per_page).limit(per_page).all()
 
-    # Distinct modules for filter dropdown
+    # Distinct modules for filter dropdown (also reused as "Pages/Modules Tracked")
     all_modules = [r[0] for r in AdminLog.query.with_entities(AdminLog.module).distinct().all() if r[0]]
+
+    # ── Unique-actor aggregation (fixes inflated Unique Users / Roles Tracked) ──
+    uniq_expr      = _activity_unique_key_expr()
+    unique_users   = base_q.with_entities(func.count(func.distinct(uniq_expr))).scalar() or 0
+    roles_tracked  = base_q.with_entities(func.count(func.distinct(AdminLog.user_role))).scalar() or 0
+    modules_tracked = base_q.with_entities(func.count(func.distinct(AdminLog.module))).scalar() or 0
 
     from datetime import timedelta
     return render_template(
         'admin/activity.html',
         logs=logs, page_num=page, per_page=per_page,
         total=total, total_pages=total_pages,
+        unique_users=unique_users, roles_tracked=roles_tracked,
+        modules_tracked=modules_tracked,
         role_filter=role_filter, module_filter=module_filter,
         date_filter=date_filter, search=search,
         all_modules=sorted(all_modules),
@@ -1940,11 +1997,21 @@ def visitor_logs():
         return Response(buf.getvalue(), mimetype='text/csv',
                         headers={'Content-Disposition': 'attachment;filename=visitor_logs.csv'})
 
+    uniq_expr = _visitor_unique_key_expr()
     stats = {
+        # Total Visits stays a raw page-view count (unchanged behaviour).
         'total':   VisitorLog.query.count(),
-        'desktop': VisitorLog.query.filter_by(device_type='Desktop').count(),
-        'mobile':  VisitorLog.query.filter_by(device_type='Mobile').count(),
-        'tablet':  VisitorLog.query.filter_by(device_type='Tablet').count(),
+        # Total Users = unique visitors (logged-in user_id, else ip+device+session).
+        'users':   VisitorLog.query.with_entities(func.count(func.distinct(uniq_expr))).scalar() or 0,
+        # Desktop / Mobile / Tablet now count UNIQUE visitors per device,
+        # not raw page hits, so one person browsing several pages on the
+        # same device is counted once instead of once per page.
+        'desktop': VisitorLog.query.filter(VisitorLog.device_type == 'Desktop')
+                                    .with_entities(func.count(func.distinct(uniq_expr))).scalar() or 0,
+        'mobile':  VisitorLog.query.filter(VisitorLog.device_type == 'Mobile')
+                                    .with_entities(func.count(func.distinct(uniq_expr))).scalar() or 0,
+        'tablet':  VisitorLog.query.filter(VisitorLog.device_type == 'Tablet')
+                                    .with_entities(func.count(func.distinct(uniq_expr))).scalar() or 0,
     }
     return render_template('admin/visitor_logs.html',
                            logs=logs, page_num=page, total=total,
@@ -1977,6 +2044,21 @@ def api_activity_poll():
     new_logs = q.order_by(AdminLog.id.desc()).limit(50).all()
     total    = AdminLog.query.count()
 
+    # Same filtered base (minus since_id, which only limits *new* rows) used
+    # for the unique-actor stat cards, so they stay in sync with the page.
+    stats_q = AdminLog.query
+    if role_filter:
+        stats_q = stats_q.filter(AdminLog.user_role == role_filter)
+    if module_filter:
+        stats_q = stats_q.filter(AdminLog.module == module_filter)
+    uniq_expr = _activity_unique_key_expr()
+    stats = {
+        'total':           total,
+        'unique_users':    stats_q.with_entities(func.count(func.distinct(uniq_expr))).scalar() or 0,
+        'roles_tracked':   stats_q.with_entities(func.count(func.distinct(AdminLog.user_role))).scalar() or 0,
+        'modules_tracked': stats_q.with_entities(func.count(func.distinct(AdminLog.module))).scalar() or 0,
+    }
+
     rows = []
     for log in new_logs:
         rows.append({
@@ -1996,7 +2078,7 @@ def api_activity_poll():
                           if log.created_at else None,
         })
 
-    return jsonify({'success': True, 'rows': rows, 'total': total})
+    return jsonify({'success': True, 'rows': rows, 'total': total, 'stats': stats})
 
 
 # ─── Real-Time Polling API: Visitor Logs ──────────────────────────────────────
@@ -2019,11 +2101,16 @@ def api_visitor_poll():
 
     new_logs = q.order_by(VisitorLog.id.desc()).limit(50).all()
 
+    uniq_expr = _visitor_unique_key_expr()
     stats = {
         'total':   VisitorLog.query.count(),
-        'desktop': VisitorLog.query.filter_by(device_type='Desktop').count(),
-        'mobile':  VisitorLog.query.filter_by(device_type='Mobile').count(),
-        'tablet':  VisitorLog.query.filter_by(device_type='Tablet').count(),
+        'users':   VisitorLog.query.with_entities(func.count(func.distinct(uniq_expr))).scalar() or 0,
+        'desktop': VisitorLog.query.filter(VisitorLog.device_type == 'Desktop')
+                                    .with_entities(func.count(func.distinct(uniq_expr))).scalar() or 0,
+        'mobile':  VisitorLog.query.filter(VisitorLog.device_type == 'Mobile')
+                                    .with_entities(func.count(func.distinct(uniq_expr))).scalar() or 0,
+        'tablet':  VisitorLog.query.filter(VisitorLog.device_type == 'Tablet')
+                                    .with_entities(func.count(func.distinct(uniq_expr))).scalar() or 0,
     }
 
     rows = []
