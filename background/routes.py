@@ -252,6 +252,80 @@ def remove_bg_route(image_id):
     })
 
 
+# ─── Process Image (one-click: remove BG → blur background → composite) ──────
+# Powers the single "Process Image" button in the simplified Studio UI.
+# Internally performs the full pipeline in one request:
+#   1. Background removal (AI/rembg with GrabCut fallback) + mask cleanup
+#   2. Blur of the original background
+#   3. Composite of the sharp vehicle onto the blurred background
+#   4. Save + return the final processed image
+@background_bp.route('/api/process/<image_id>', methods=['POST'])
+@_studio_dealer_required
+@feature_required('studio')
+def process_image_route(image_id):
+    car = StudioImage.query.get(image_id)
+    if car is None:
+        return jsonify({'error': 'Image not found'}), 404
+    if not car.original_path or not os.path.exists(car.original_path):
+        return jsonify({'error': 'Source image file not found on server. Please re-upload.'}), 400
+
+    data           = request.get_json(silent=True) or {}
+    engine         = data.get('engine', 'auto')
+    quality        = data.get('quality', 'standard')
+    despill_enable = bool(data.get('despill', False))
+
+    # ── Step 1: Remove background ─────────────────────────────────────────────
+    result, method = remove_bg_ai(car.original_path, quality=quality,
+                                   engine=engine, despill_enable=despill_enable)
+    bg_removed = True
+    if result is None:
+        result     = Image.open(car.original_path).convert('RGBA')
+        method     = 'original_kept'
+        bg_removed = False
+
+    if bg_removed:
+        try:
+            result = keep_largest_component(result)
+            result = remove_persons_and_objects(result)
+            result = remove_connected_persons(result)
+            result = trim_side_cars(result)
+            result = trim_top_objects(result)
+            result = remove_thin_protrusions(result)
+            result = restore_tyres(result)
+            result = restore_windshield(result)
+        except Exception as _e_clean:
+            current_app.logger.warning(f'[process] post-cleanup error (non-fatal): {_e_clean}')
+
+    processed_folder = _processed_folder()
+    nobg_path = os.path.join(processed_folder, f'nobg_{car.id}.png')
+    result.save(nobg_path, 'PNG')
+    car.nobg_path          = nobg_path
+    car.bg_removal_method  = method
+    car.bg_removal_quality = quality
+
+    # ── Steps 2 & 3: Blur the original background + composite the sharp car ───
+    try:
+        composited = apply_60_percent_background_blur(car.original_path, result)
+    except Exception as e:
+        current_app.logger.exception(f'process_image_route: blur/composite failed: {e}')
+        return jsonify({'error': f'Compositing failed: {str(e)}'}), 500
+
+    # ── Step 4: Save + return the final image ──────────────────────────────────
+    out_path = os.path.join(processed_folder, f'proc_{car.id}.jpg')
+    composited.save(out_path, 'JPEG', quality=95)
+    car.processed_path = out_path
+    car.status          = 'completed' if bg_removed else 'uploaded'
+    db.session.add(StudioCreditLog(action=f'Process Image [{method}]', cost=0))
+    db.session.commit()
+
+    return jsonify({
+        'processed_url': '/static/processed/' + os.path.basename(out_path),
+        'status':         car.status,
+        'method':         method,
+        'bg_removed':     bg_removed
+    })
+
+
 # ─── Remove BG Batch ──────────────────────────────────────────────────────────
 
 @background_bp.route('/api/remove-bg-batch', methods=['POST'])
