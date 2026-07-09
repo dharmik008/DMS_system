@@ -29,7 +29,6 @@
 .preview-slot         { background:var(--bg); border:1px solid var(--border); border-radius:10px; overflow:hidden; position:relative; }
 .preview-slot img     { width:100%; height:220px; object-fit:contain; display:block; }
 .preview-label        { position:absolute; top:8px; left:8px; background:rgba(0,0,0,.55); color:#fff; font-size:11px; font-weight:600; padding:3px 8px; border-radius:20px; }
-.checker-bg           { background-image: conic-gradient(#ccc 25%, #fff 25% 50%, #ccc 50% 75%, #fff 75%); background-size: 20px 20px; }
 
 /* Upload Thumbnails */
 .thumb-strip          { display:flex; gap:8px; flex-wrap:wrap; padding:12px 18px; border-top:1px solid var(--border); flex-shrink:0; }
@@ -46,21 +45,6 @@
 .panel-section-header { padding:12px 16px; border-bottom:1px solid var(--border); font-weight:700; font-size:13px; color:var(--navy); display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
 .panel-section-body   { padding:14px 16px; }
 .panel-section-body.collapsed { display:none; }
-
-/* BG Swatches */
-.swatch-grid          { display:grid; grid-template-columns:repeat(6,1fr); gap:6px; }
-.swatch               { width:100%; aspect-ratio:1; border-radius:6px; cursor:pointer; border:2px solid transparent; transition:.15s; }
-.swatch.active        { border-color:var(--navy); transform:scale(1.15); }
-.bg-presets           { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:10px; }
-.bg-preset            { padding:7px 10px; border:1px solid var(--border); border-radius:8px; cursor:pointer; display:flex; align-items:center; gap:8px; font-size:12px; font-weight:600; color:var(--navy); transition:.15s; }
-.bg-preset:hover,
-.bg-preset.active     { border-color:var(--gold-accent); background:var(--gold); }
-.bg-dot               { width:18px; height:18px; border-radius:50%; flex-shrink:0; border:1px solid rgba(0,0,0,.12); }
-
-/* Sliders */
-.slider-group         { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
-.slider-label         { display:flex; justify-content:space-between; font-size:12px; font-weight:600; color:var(--text-secondary); }
-input[type=range]     { width:100%; accent-color:var(--navy); }
 
 /* Action Buttons */
 .studio-actions       { display:flex; flex-direction:column; gap:8px; }
@@ -102,8 +86,6 @@ input[type=range]     { width:100%; accent-color:var(--navy); }
   .studio-wrap { gap:12px; }
   .preview-grid { grid-template-columns:1fr; }
   .preview-slot img { height:180px; }
-  .swatch-grid { grid-template-columns:repeat(5,1fr); }
-  .bg-presets { grid-template-columns:1fr; }
   .quality-grid { grid-template-columns:1fr; }
   .engine-pills { flex-direction:column; }
   .engine-pill { width:100%; }
@@ -117,11 +99,6 @@ input[type=range]     { width:100%; accent-color:var(--navy); }
 .engine-pill  { flex:1; padding:6px; border:1.5px solid var(--border); border-radius:8px; font-size:11px; font-weight:700; text-align:center; cursor:pointer; color:var(--navy); transition:.15s; }
 .engine-pill.active { border-color:var(--gold-accent); background:var(--gold); }
 
-/* View Angle Labels */
-.view-angle-badge { position:absolute; top:8px; right:8px; background:rgba(15,36,68,.85); color:#FFD700; font-size:10px; font-weight:800; padding:3px 8px; border-radius:20px; letter-spacing:.5px; text-transform:uppercase; }
-.view-select      { font-size:11px; font-weight:700; border:1.5px solid var(--border); border-radius:6px; padding:3px 6px; background:var(--surface); color:var(--navy); cursor:pointer; margin-top:4px; width:100%; }
-.view-select:focus{ outline:none; border-color:var(--gold-accent); }
-.angle-restrict-note { font-size:11px; color:var(--text-secondary); padding:8px 12px; background:rgba(255,215,0,.08); border:1px solid var(--gold-accent); border-radius:8px; margin-bottom:10px; }
 .size-info { font-size:11px; color:var(--text-secondary); padding:4px 0; }
 </style>
 {% endblock %}
@@ -136,9 +113,6 @@ input[type=range]     { width:100%; accent-color:var(--navy); }
   </div>
   <div style="display:flex;gap:10px">
     <button class="btn btn-outline btn-sm" id="btnClearAll"><i class="fas fa-trash-alt"></i> Clear All</button>
-    <button class="btn btn-primary btn-sm" id="btnBatchProcess" disabled>
-      <i class="fas fa-bolt"></i> Process All (<span id="batchCount">0</span>)
-    </button>
   </div>
 </div>
 
@@ -174,24 +148,16 @@ input[type=range]     { width:100%; accent-color:var(--navy); }
         <div class="preview-grid" id="previewGrid" style="display:none;width:100%">
           <div class="preview-slot">
             <span class="preview-label">Original</span>
-            <span class="view-angle-badge" id="viewAngleBadge" style="display:none">—</span>
             <img id="previewOriginal" src="" alt="Original">
             <div class="size-info" id="imageSizeInfo" style="padding:4px 8px;display:none">
               <i class="fas fa-expand-arrows-alt" style="color:var(--gold-accent)"></i> <span id="imageSizeText"></span>
             </div>
           </div>
-          <div class="preview-slot checker-bg">
-            <span class="preview-label">No Background</span>
-            <img id="previewNobg" src="" alt="No BG" style="display:none">
-            <div style="width:100%;height:220px;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);font-size:12px" id="nobgPlaceholder">
-              <span><i class="fas fa-wand-magic-sparkles" style="font-size:28px;display:block;text-align:center;margin-bottom:8px;color:var(--border)"></i>Remove BG to preview</span>
-            </div>
-          </div>
-          <div class="preview-slot" style="grid-column:1/-1">
-            <span class="preview-label">Final Composite</span>
-            <img id="previewFinal" src="" alt="Final" style="display:none;height:240px;width:100%;object-fit:contain">
-            <div style="width:100%;height:240px;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);font-size:12px" id="finalPlaceholder">
-              <span><i class="fas fa-layer-group" style="font-size:28px;display:block;text-align:center;margin-bottom:8px;color:var(--border)"></i>Apply background to see result</span>
+          <div class="preview-slot">
+            <span class="preview-label">Final Processed Image</span>
+            <img id="previewFinal" src="" alt="Final" style="display:none">
+            <div style="width:100%;height:220px;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);font-size:12px" id="finalPlaceholder">
+              <span><i class="fas fa-layer-group" style="font-size:28px;display:block;text-align:center;margin-bottom:8px;color:var(--border)"></i>Click Process Image to see result</span>
             </div>
           </div>
         </div>
@@ -214,9 +180,6 @@ input[type=range]     { width:100%; accent-color:var(--navy); }
           <a id="downloadLink" href="#" class="btn btn-navy btn-sm" download>
             <i class="fas fa-download"></i> Download
           </a>
-          <button class="btn btn-outline btn-sm" onclick="saveToGallery()">
-            <i class="fas fa-save"></i> Save to Gallery
-          </button>
           <!-- FEATURE 1 FIX: Only visible when opened from vehicle edit page with ?vehicle_id=X -->
           <button id="btnSaveToInventory"
                   onclick="saveToInventory()"
@@ -236,48 +199,13 @@ input[type=range]     { width:100%; accent-color:var(--navy); }
   <!-- ═══ RIGHT: Controls Panel ════════════════════════════════════════════ -->
   <div class="studio-panel">
 
-    <!-- View Angle Selector -->
+    <!-- Process Image -->
     <div class="panel-section">
       <div class="panel-section-header" onclick="toggleSection(this)">
-        <span style="background:var(--gold-accent);color:var(--navy);border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0">⬡</span>
-        <i class="fas fa-camera" style="color:var(--gold-accent)"></i> Image View Angle
+        <i class="fas fa-magic" style="color:var(--gold-accent)"></i> Process Image
         <i class="fas fa-chevron-down" style="margin-left:auto;font-size:11px;transition:.2s"></i>
       </div>
       <div class="panel-section-body">
-        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">
-          Assign each image's view. BG removal only applies to Front, Back, Left &amp; Right.
-        </div>
-        <select id="viewAngleSelect" class="view-select" onchange="setCurrentAngle(this.value)">
-          <option value="front">🔵 Front View</option>
-          <option value="back">🟢 Back View</option>
-          <option value="left">🟡 Left Side</option>
-          <option value="right">🟠 Right Side</option>
-          <option value="other">⚪ Other (Interior / Detail)</option>
-        </select>
-        <div style="margin-top:10px;display:grid;grid-template-columns:repeat(2,1fr);gap:6px" id="quickAngleBtns">
-          <button class="btn btn-outline btn-sm" onclick="setAngleForAll('front','back','left','right')">
-            <i class="fas fa-check-double"></i> Auto-assign 4 views
-          </button>
-          <button class="btn btn-outline btn-sm" onclick="showAllAngles()">
-            <i class="fas fa-list"></i> Show angles
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Step 1: Remove Background -->
-    <div class="panel-section">
-      <div class="panel-section-header" onclick="toggleSection(this)">
-        <span style="background:var(--navy);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0">1</span>
-        <i class="fas fa-eraser" style="color:var(--gold-accent)"></i> Remove Background
-        <i class="fas fa-chevron-down" style="margin-left:auto;font-size:11px;transition:.2s"></i>
-      </div>
-      <div class="panel-section-body">
-        <!-- Angle restriction note -->
-        <div class="angle-restrict-note">
-          <i class="fas fa-info-circle" style="color:var(--gold-accent)"></i>
-          Background removal applies to <strong>Front, Back, Left &amp; Right</strong> views only.
-        </div>
         <!-- Quality -->
         <div style="margin-bottom:10px">
           <div style="font-size:12px;font-weight:700;color:var(--text-secondary);margin-bottom:6px">QUALITY</div>
@@ -298,136 +226,10 @@ input[type=range]     { width:100%; accent-color:var(--navy); }
           </div>
         </div>
         <div class="studio-actions">
-          <button class="btn-studio btn-studio-primary" id="btnRemoveBg" disabled>
-            <i class="fas fa-magic"></i> Remove Background
+          <button class="btn-studio btn-studio-primary" id="btnProcessImage" disabled>
+            <i class="fas fa-magic"></i> Process Image
           </button>
         </div>
-      </div>
-    </div>
-
-    <!-- Step 2: Choose Background -->
-    <div class="panel-section">
-      <div class="panel-section-header" onclick="toggleSection(this)">
-        <span style="background:var(--navy);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0">2</span>
-        <i class="fas fa-palette" style="color:var(--gold-accent)"></i> Background Style
-        <i class="fas fa-chevron-down" style="margin-left:auto;font-size:11px;transition:.2s"></i>
-      </div>
-      <div class="panel-section-body">
-        <!-- Studio presets -->
-        <div style="font-size:11px;font-weight:700;color:var(--text-secondary);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Studio</div>
-        <div class="bg-presets" id="bgPresets">
-          {% for bg in backgrounds.studio %}
-          <div class="bg-preset {% if loop.first %}active{% endif %}" data-bgid="{{ bg.id }}" data-color="{{ bg.color }}">
-            <div class="bg-dot" style="background:{{ bg.color }}"></div>
-            <span>{{ bg.name }}</span>
-          </div>
-          {% endfor %}
-        </div>
-        <!-- Outdoor presets -->
-        <div style="font-size:11px;font-weight:700;color:var(--text-secondary);margin:8px 0 6px;text-transform:uppercase;letter-spacing:.5px">Outdoor</div>
-        <div class="bg-presets">
-          {% for bg in backgrounds.outdoor %}
-          <div class="bg-preset" data-bgid="{{ bg.id }}" data-color="{{ bg.color }}">
-            <div class="bg-dot" style="background:{{ bg.color }}"></div>
-            <span>{{ bg.name }}</span>
-          </div>
-          {% endfor %}
-        </div>
-        <!-- Color Swatches -->
-        <div style="font-size:11px;font-weight:700;color:var(--text-secondary);margin:8px 0 6px;text-transform:uppercase;letter-spacing:.5px">Custom Color</div>
-        <div class="swatch-grid">
-          {% for sw in swatches %}
-          <div class="swatch" style="background:{{ sw }}" data-color="{{ sw }}" title="{{ sw }}" onclick="selectSwatch(this)"></div>
-          {% endfor %}
-          <input type="color" id="customColorPicker" style="width:100%;aspect-ratio:1;border:2px solid var(--border);border-radius:6px;cursor:pointer;padding:2px" title="Custom Color">
-        </div>
-        <!-- Upload Custom BG -->
-        <div style="margin-top:10px">
-          <label style="font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px">Upload Custom Background</label>
-          <input type="file" id="customBgInput" accept="image/*" style="display:none">
-          <button class="btn btn-outline btn-sm" style="width:100%;margin-top:6px" onclick="document.getElementById('customBgInput').click()">
-            <i class="fas fa-image"></i> Upload Background Image
-          </button>
-          <div id="customBgThumb" style="margin-top:8px;display:none">
-            <img id="customBgImg" src="" style="width:100%;height:70px;object-fit:cover;border-radius:8px;border:1.5px solid var(--gold-accent)">
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Step 3: Adjust & Composite -->
-    <div class="panel-section">
-      <div class="panel-section-header" onclick="toggleSection(this)">
-        <span style="background:var(--navy);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0">3</span>
-        <i class="fas fa-sliders-h" style="color:var(--gold-accent)"></i> Adjust & Composite
-        <i class="fas fa-chevron-down" style="margin-left:auto;font-size:11px;transition:.2s"></i>
-      </div>
-      <div class="panel-section-body">
-        <div class="slider-group">
-          <div class="slider-label">
-            <span>Car Size</span><span id="carSizeVal">78%</span>
-          </div>
-          <input type="range" id="carSize" min="35" max="95" value="78" oninput="document.getElementById('carSizeVal').textContent=this.value+'%'; _saveImageSettings()">
-        </div>
-        <div class="slider-group">
-          <div class="slider-label">
-            <span>Lighting</span><span id="lightingVal">1.0×</span>
-          </div>
-          <input type="range" id="lighting" min="0.5" max="1.8" step="0.05" value="1.0" oninput="document.getElementById('lightingVal').textContent=parseFloat(this.value).toFixed(2)+'×'; _saveImageSettings()">
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <span style="font-size:12px;font-weight:600;color:var(--text-secondary)">Shadow</span>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="shadowToggle" checked style="width:16px;height:16px;accent-color:var(--navy)">
-            <span style="font-size:12px;font-weight:600;color:var(--navy)">Enabled</span>
-          </label>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <span style="font-size:12px;font-weight:600;color:var(--text-secondary)">Use Studio BG</span>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="useStaticBg" checked style="width:16px;height:16px;accent-color:var(--navy)" onchange="if(this.checked){document.getElementById('useBlurBg').checked=false;}">
-            <span style="font-size:12px;font-weight:600;color:var(--navy)">ba1_studio.jpg</span>
-          </label>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-          <span style="font-size:12px;font-weight:600;color:var(--text-secondary)">Blur Real Background</span>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="useBlurBg" style="width:16px;height:16px;accent-color:var(--navy)" onchange="if(this.checked){document.getElementById('useStaticBg').checked=false;}">
-            <span style="font-size:12px;font-weight:600;color:var(--navy)">Like number-plate blur</span>
-          </label>
-        </div>
-        <div class="studio-actions">
-          <button class="btn-studio btn-studio-gold" id="btnApplyBg" disabled>
-            <i class="fas fa-layer-group"></i> Apply Background (This Image Only)
-          </button>
-          <!-- Apply to All hidden: background applies only to the selected image, not to other images -->
-          <button class="btn-studio btn-studio-outline" id="btnApplyAll" disabled style="display:none;">
-            <i class="fas fa-images"></i> Apply to All Images
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Output Settings -->
-    <div class="panel-section">
-      <div class="panel-section-header" onclick="toggleSection(this)">
-        <i class="fas fa-cog" style="color:var(--gold-accent)"></i> Output Settings
-        <i class="fas fa-chevron-down" style="margin-left:auto;font-size:11px;transition:.2s"></i>
-      </div>
-      <div class="panel-section-body panel-section-body collapsed">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-          <div>
-            <label style="font-size:11px;font-weight:700;color:var(--text-secondary)">WIDTH (px)</label>
-            <input type="number" id="outWidth" value="1200" class="form-control" style="margin-top:4px;padding:7px">
-          </div>
-          <div>
-            <label style="font-size:11px;font-weight:700;color:var(--text-secondary)">HEIGHT (px)</label>
-            <input type="number" id="outHeight" value="800" class="form-control" style="margin-top:4px;padding:7px">
-          </div>
-        </div>
-        <button class="btn-studio btn-studio-outline" id="btnResize" disabled>
-          <i class="fas fa-expand-arrows-alt"></i> Resize Output
-        </button>
       </div>
     </div>
 
@@ -438,45 +240,10 @@ input[type=range]     { width:100%; accent-color:var(--navy); }
 {% block extra_js %}
 <script>
 // ─── State ──────────────────────────────────────────────────────────────────
-let images      = [];   // [{id, filename, car_name, original_url, nobg_url, bg_removed, session_group}]
+let images      = [];   // [{id, filename, car_name, original_url, processed_url, session_group}]
 let activeIdx   = 0;
-let selectedBgId     = 'studio_white';
-let selectedBgColor  = null;
-let customBgPath     = null;
 let selectedQuality  = 'standard';
 let selectedEngine   = 'auto';
-
-// Per-image lighting/carSize settings — keyed by image.id
-const imageSettings = {};   // { [img.id]: { lighting, carSize } }
-
-function _saveImageSettings() {
-  const img = images[activeIdx];
-  if (!img) return;
-  imageSettings[img.id] = {
-    lighting: parseFloat(document.getElementById('lighting').value),
-    carSize:  parseInt(document.getElementById('carSize').value),
-  };
-}
-
-function _restoreImageSettings(imgId) {
-  const s = imageSettings[imgId];
-  const lightEl   = document.getElementById('lighting');
-  const lightValEl = document.getElementById('lightingVal');
-  const carSzEl   = document.getElementById('carSize');
-  const carSzValEl = document.getElementById('carSizeVal');
-  if (s) {
-    lightEl.value      = s.lighting;
-    lightValEl.textContent = s.lighting.toFixed(2) + '×';
-    carSzEl.value      = s.carSize;
-    carSzValEl.textContent = s.carSize + '%';
-  } else {
-    // default values
-    lightEl.value      = 1.0;
-    lightValEl.textContent = '1.0×';
-    carSzEl.value      = 78;
-    carSzValEl.textContent = '78%';
-  }
-}
 
 // FEATURE 1 FIX: Read vehicle_id from URL query string.
 // When Studio is opened from the vehicle edit page as:
@@ -494,7 +261,7 @@ const IS_PRIMARY_CONTEXT = new URLSearchParams(window.location.search).get('prim
 
 // Tracks which Studio image ids have already been auto-pushed to the
 // vehicle, so we don't push the same image twice if the user clicks
-// "Remove Background" again on it.
+// "Process Image" again on it.
 const _autoSavedIds = new Set();
 
 // ─── Drop Zone ───────────────────────────────────────────────────────────────
@@ -535,18 +302,9 @@ async function handleFiles(fileList) {
   try {
     const data = await safeFetchJSON('/studio/api/upload', { method: 'POST', body: fd });
     images    = data;
-    // Ensure view_angle is set (backend already sets front/back/left/right/other by order)
-    images.forEach((img, i) => {
-      if (!img.view_angle) {
-        const defaults = ['front','back','left','right'];
-        img.view_angle = defaults[i] || 'other';
-      }
-    });
     activeIdx = 0;
     renderThumbs();
     selectImage(0);
-    document.getElementById('btnBatchProcess').disabled  = false;
-    document.getElementById('batchCount').textContent    = images.length;
   } catch (e) {
     alert('Upload error: ' + e.message);
     console.error('[upload]', e);
@@ -554,35 +312,7 @@ async function handleFiles(fileList) {
   hideOverlay();
 }
 
-// ─── View Angle Management ────────────────────────────────────────────────────
-function setCurrentAngle(angle) {
-  if (!images.length) return;
-  images[activeIdx].view_angle = angle;
-  renderThumbs();
-  // Re-run selectImage to update badge and button state
-  selectImage(activeIdx);
-}
-
-function setAngleForAll(...angles) {
-  images.forEach((img, i) => {
-    img.view_angle = angles[i] || 'other';
-  });
-  renderThumbs();
-  selectImage(activeIdx);
-  flashSuccess('View angles auto-assigned: Front / Back / Left / Right');
-}
-
-function showAllAngles() {
-  const summary = images.map((img, i) =>
-    `Image ${i + 1}: ${VIEW_ANGLE_LABELS[img.view_angle] || img.view_angle}`
-  ).join('\n');
-  alert('Current angle assignments:\n\n' + summary);
-}
-
 // ─── Thumbnail Strip ──────────────────────────────────────────────────────────
-const VIEW_ANGLE_LABELS = { front: 'Front', back: 'Back', left: 'Left', right: 'Right', other: 'Other' };
-const VIEW_ANGLES_WITH_BG = new Set(['front', 'back', 'left', 'right']);
-
 function renderThumbs() {
   const strip = document.getElementById('thumbStrip');
   strip.innerHTML = '';
@@ -590,19 +320,14 @@ function renderThumbs() {
   images.forEach((img, i) => {
     const div = document.createElement('div');
     div.className = 'thumb-item' + (i === activeIdx ? ' active' : '');
-    const angle = img.view_angle || 'front';
-    const angleLabel = VIEW_ANGLE_LABELS[angle] || angle;
     div.innerHTML = `<img src="${img.original_url}" alt="">
-      <div class="thumb-status ${img.nobg_url ? 'done' : (img.view_angle === 'other' ? 'err' : 'proc')}"></div>
-      <div style="position:absolute;bottom:2px;left:2px;background:rgba(15,36,68,.8);color:#FFD700;font-size:8px;font-weight:800;padding:1px 5px;border-radius:10px">${angleLabel}</div>`;
+      <div class="thumb-status ${img.processed_url ? 'done' : 'proc'}"></div>`;
     div.onclick = () => selectImage(i);
     strip.appendChild(div);
   });
 }
 
 function selectImage(idx) {
-  // Save current image's slider state before switching
-  _saveImageSettings();
   activeIdx = idx;
   images.forEach((_, i) => {
     const el = document.getElementById('thumbStrip').children[i];
@@ -610,44 +335,12 @@ function selectImage(idx) {
   });
 
   const img = images[idx];
-  const angle = img.view_angle || 'front';
-  const canRemoveBg = VIEW_ANGLES_WITH_BG.has(angle);
 
   document.getElementById('dropZone').style.display   = 'none';
   document.getElementById('previewGrid').style.display = 'grid';
   document.getElementById('previewOriginal').src = img.original_url;
 
-  // Show view angle badge
-  const badge = document.getElementById('viewAngleBadge');
-  badge.textContent = VIEW_ANGLE_LABELS[angle] || angle;
-  badge.style.display = 'block';
-
-  // Update view selector in panel
-  const sel = document.getElementById('viewAngleSelect');
-  if (sel) sel.value = angle;
-
-  // Enforce: only front/back/left/right can have BG removed
-  const removeBgBtn = document.getElementById('btnRemoveBg');
-  if (canRemoveBg) {
-    removeBgBtn.disabled = false;
-    removeBgBtn.title = '';
-  } else {
-    removeBgBtn.disabled = true;
-    removeBgBtn.title = 'BG removal only for Front/Back/Left/Right views';
-  }
-
-  if (img.nobg_url) {
-    document.getElementById('previewNobg').src           = img.nobg_url;
-    document.getElementById('previewNobg').style.display  = 'block';
-    document.getElementById('nobgPlaceholder').style.display = 'none';
-    document.getElementById('btnApplyBg').disabled       = false;
-    document.getElementById('btnApplyAll').disabled      = false;
-  } else {
-    document.getElementById('previewNobg').style.display     = 'none';
-    document.getElementById('nobgPlaceholder').style.display = 'flex';
-    document.getElementById('btnApplyBg').disabled           = true;
-    document.getElementById('btnApplyAll').disabled          = true;
-  }
+  document.getElementById('btnProcessImage').disabled = false;
 
   if (img.processed_url) {
     document.getElementById('previewFinal').src           = img.processed_url;
@@ -659,48 +352,30 @@ function selectImage(idx) {
     document.getElementById('finalPlaceholder').style.display = 'flex';
     document.getElementById('downloadBar').classList.remove('show');
   }
-
-  // Restore per-image lighting & car-size slider values
-  _restoreImageSettings(img.id);
 }
 
-// ─── Remove Background ────────────────────────────────────────────────────────
-document.getElementById('btnRemoveBg').addEventListener('click', async () => {
+// ─── Process Image (one click: remove BG → blur background → composite) ──────
+document.getElementById('btnProcessImage').addEventListener('click', async () => {
   if (!images.length) return;
   const img = images[activeIdx];
-  const angle = img.view_angle || 'front';
-  if (!VIEW_ANGLES_WITH_BG.has(angle)) {
-    alert(`Background removal is only available for Front, Back, Left, and Right views.\n\nThis image is labeled as "${VIEW_ANGLE_LABELS[angle] || angle}". Change its view angle to proceed.`);
-    return;
-  }
-  showOverlay('Removing background…', 'AI is processing — may take 10-20s');
+  showOverlay('Processing image…', 'Removing background, blurring backdrop & compositing — may take 10-20s');
 
   try {
-    // FIX: use safeFetchJSON to avoid HTML-parse errors
-    // FIX: use safeFetchJSON to avoid HTML-parse errors
-    // FIX: use safeFetchJSON to avoid HTML-parse errors
-    // FIX: use safeFetchJSON to avoid HTML-parse errors
-    // FIX: use safeFetchJSON to avoid HTML-parse errors
-    // FIX: use safeFetchJSON to avoid HTML-parse errors
-    // FIX: use safeFetchJSON to avoid HTML-parse errors
-    const res  = await fetch(`/studio/api/remove-bg/${img.id}`, {
+    const data = await safeFetchJSON(`/studio/api/process/${img.id}`, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ quality: selectedQuality, engine: selectedEngine })
     });
-    const data = await res.json();
-    if (!res.ok) { alert(data.error || 'Failed'); hideOverlay(); return; }
 
-    img.nobg_url = data.nobg_url;
-    img.bg_removed = data.bg_removed;
-    document.getElementById('previewNobg').src           = data.nobg_url + '?t=' + Date.now();
-    document.getElementById('previewNobg').style.display  = 'block';
-    document.getElementById('nobgPlaceholder').style.display = 'none';
-    document.getElementById('btnApplyBg').disabled       = false;
-    document.getElementById('btnApplyAll').disabled      = false;
+    img.processed_url = data.processed_url;
+
+    document.getElementById('previewFinal').src           = data.processed_url + '?t=' + Date.now();
+    document.getElementById('previewFinal').style.display  = 'block';
+    document.getElementById('finalPlaceholder').style.display = 'none';
+    showDownloadBar(img);
     renderThumbs();
-    flashSuccess(data.bg_removed ? `Background removed (${data.method})` : 'Original kept (no BG detected)');
     hideOverlay();
+    flashSuccess('Image processed successfully!');
 
     // ── Auto-integration with Vehicle Images ────────────────────────────────
     // If Studio was opened from a specific vehicle, immediately reuse the
@@ -714,154 +389,6 @@ document.getElementById('btnRemoveBg').addEventListener('click', async () => {
     alert('Error: ' + e.message);
   }
   hideOverlay();
-});
-
-// ─── Batch Process ────────────────────────────────────────────────────────────
-document.getElementById('btnBatchProcess').addEventListener('click', async () => {
-  if (!images.length) return;
-  // Only process images with valid 4-view angles
-  const eligible = images.filter(i => VIEW_ANGLES_WITH_BG.has(i.view_angle || 'front'));
-  if (!eligible.length) {
-    alert('No Front/Back/Left/Right images to process. Please assign view angles first.');
-    return;
-  }
-  showOverlay('Batch processing…', `Processing ${eligible.length} of ${images.length} images (4-view only)`);
-  const ids = eligible.map(i => i.id);
-  try {
-    const res  = await fetch('/studio/api/remove-bg-batch', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ ids, quality: selectedQuality, engine: selectedEngine })
-    });
-    const data = await res.json();
-    if (!res.ok) { alert(data.error || 'Batch failed'); hideOverlay(); return; }
-
-    data.results.forEach(r => {
-      const img = images.find(i => i.id === r.id);
-      if (img && r.success && r.nobg_path) {
-        img.nobg_url = '/'+r.nobg_path.replace(/\\/g,'/');
-        img.bg_removed = r.bg_removed;
-      }
-    });
-    selectImage(activeIdx);
-    renderThumbs();
-    flashSuccess(`Batch done: ${data.done}/${data.total} processed`);
-  } catch(e) {
-    alert('Error: ' + e.message);
-  }
-  hideOverlay();
-});
-
-// ─── Apply Background ─────────────────────────────────────────────────────────
-document.getElementById('btnApplyBg').addEventListener('click', () => applyBg(activeIdx));
-
-async function applyBg(idx) {
-  if (!images.length) return;
-  const img = images[idx];
-  showOverlay('Applying background…', 'Compositing your car photo');
-  try {
-    const payload = buildBgPayload();
-    const res  = await fetch(`/studio/api/apply-bg/${img.id}`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if (!res.ok) { alert(data.error || 'Failed'); hideOverlay(); return; }
-
-    img.processed_url = data.processed_url;
-    img.nobg_url = img.nobg_url || null;  // might have been auto-removed
-
-    document.getElementById('previewFinal').src           = data.processed_url + '?t=' + Date.now();
-    document.getElementById('previewFinal').style.display  = 'block';
-    document.getElementById('finalPlaceholder').style.display = 'none';
-    showDownloadBar(img);
-    flashSuccess('Background applied successfully!');
-  } catch(e) {
-    alert('Error: ' + e.message);
-  }
-  hideOverlay();
-}
-
-// ─── Apply to All ─────────────────────────────────────────────────────────────
-document.getElementById('btnApplyAll').addEventListener('click', async () => {
-  if (!images.length) return;
-  showOverlay('Applying to all images…', `Processing ${images.length} images`);
-  const payload = buildBgPayload();
-  payload.ids = images.map(i => i.id);
-  try {
-    const res  = await fetch('/studio/api/apply-to-all', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    flashSuccess(`Done: ${data.done}/${data.total} images processed`);
-  } catch(e) {
-    alert('Error: ' + e.message);
-  }
-  hideOverlay();
-});
-
-// ─── Build Payload ────────────────────────────────────────────────────────────
-function buildBgPayload() {
-  return {
-    bg_id:           selectedBgId,
-    custom_color:    selectedBgColor,
-    custom_bg_path:  customBgPath,
-    use_static_bg:   document.getElementById('useStaticBg').checked,
-    use_blur_bg:     document.getElementById('useBlurBg').checked,
-    lighting:        parseFloat(document.getElementById('lighting').value),
-    shadow:          document.getElementById('shadowToggle').checked,
-    car_size_percent:parseInt(document.getElementById('carSize').value),
-    width:           parseInt(document.getElementById('outWidth').value),
-    height:          parseInt(document.getElementById('outHeight').value),
-    quality:         selectedQuality,
-    engine:          selectedEngine
-  };
-}
-
-// ─── BG Preset Clicks ────────────────────────────────────────────────────────
-document.querySelectorAll('.bg-preset').forEach(el => {
-  el.addEventListener('click', () => {
-    document.querySelectorAll('.bg-preset').forEach(e => e.classList.remove('active'));
-    el.classList.add('active');
-    selectedBgId    = el.dataset.bgid;
-    selectedBgColor = null;
-    customBgPath    = null;
-  });
-});
-
-// ─── Swatch Clicks ───────────────────────────────────────────────────────────
-function selectSwatch(el) {
-  document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
-  el.classList.add('active');
-  selectedBgId    = 'custom';
-  selectedBgColor = el.dataset.color;
-}
-
-document.getElementById('customColorPicker').addEventListener('input', function() {
-  selectedBgId    = 'custom';
-  selectedBgColor = this.value;
-});
-
-// ─── Custom BG Upload ─────────────────────────────────────────────────────────
-document.getElementById('customBgInput').addEventListener('change', async function() {
-  if (!this.files.length) return;
-  const fd = new FormData();
-  fd.append('bg_image', this.files[0]);
-  try {
-    const res  = await fetch('/studio/api/upload-bg-image', { method:'POST', body:fd });
-    const data = await res.json();
-    customBgPath = data.path;
-    selectedBgId = data.bg_id;
-    if (data.thumb_b64) {
-      document.getElementById('customBgImg').src = 'data:image/jpeg;base64,' + data.thumb_b64;
-      document.getElementById('customBgThumb').style.display = 'block';
-    }
-  } catch(e) {
-    alert('Upload failed: ' + e.message);
-  }
 });
 
 // ─── Quality Buttons ──────────────────────────────────────────────────────────
@@ -882,23 +409,6 @@ document.querySelectorAll('.engine-pill').forEach(el => {
   });
 });
 
-// ─── Resize ──────────────────────────────────────────────────────────────────
-document.getElementById('btnResize').addEventListener('click', async () => {
-  if (!images.length) return;
-  const img = images[activeIdx];
-  const res = await fetch(`/studio/api/resize/${img.id}`, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      width:  parseInt(document.getElementById('outWidth').value),
-      height: parseInt(document.getElementById('outHeight').value)
-    })
-  });
-  const data = await res.json();
-  img.processed_url = data.processed_url;
-  flashSuccess('Resized!');
-});
-
 // ─── Clear All ────────────────────────────────────────────────────────────────
 document.getElementById('btnClearAll').addEventListener('click', () => {
   images = []; activeIdx = 0;
@@ -907,34 +417,16 @@ document.getElementById('btnClearAll').addEventListener('click', () => {
   document.getElementById('previewGrid').style.display  = 'none';
   document.getElementById('dropZone').style.display     = 'flex';
   document.getElementById('downloadBar').classList.remove('show');
-  document.getElementById('btnRemoveBg').disabled       = true;
-  document.getElementById('btnApplyBg').disabled        = true;
-  document.getElementById('btnApplyAll').disabled       = true;
-  document.getElementById('btnBatchProcess').disabled   = true;
-  document.getElementById('batchCount').textContent     = '0';
+  document.getElementById('btnProcessImage').disabled   = true;
   document.getElementById('fileInput').value            = '';
-  const badge = document.getElementById('viewAngleBadge');
-  if (badge) badge.style.display = 'none';
 });
 
-// ─── Download + Gallery ───────────────────────────────────────────────────────
+// ─── Download ─────────────────────────────────────────────────────────────────
 function showDownloadBar(img) {
   const bar  = document.getElementById('downloadBar');
   const link = document.getElementById('downloadLink');
   link.href  = `/studio/api/download/${img.id}`;
   bar.classList.add('show');
-  document.getElementById('btnResize').disabled = false;
-}
-
-async function saveToGallery() {
-  const ids = images.filter(i => i.processed_url).map(i => i.id);
-  if (!ids.length) { alert('No processed images to save'); return; }
-  await fetch('/studio/api/save-gallery', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ ids })
-  });
-  flashSuccess('Saved to gallery!');
 }
 
 // FEATURE 1 FIX ─────────────────────────────────────────────────────────────
@@ -958,9 +450,9 @@ if (VEHICLE_ID) {
 async function pushToInventory(img, opts) {
   opts = opts || {};
   if (!img) return;
-  if (!img.processed_url && !img.nobg_url) {
+  if (!img.processed_url) {
     if (!opts.auto) {
-      alert('Please process the image first.\n\n1. Click "Remove Background"\n2. Optionally apply a background\n3. Then click "Save to Inventory"');
+      alert('Please process the image first.\n\n1. Click "Process Image"\n2. Then click "Save to Inventory"');
     }
     return;
   }
