@@ -1295,3 +1295,37 @@ td {
     display: block;
   }
 }
+
+/* ========== Voice Search Mic Button (dealer panel) ========== */
+.voice-search-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background .15s, color .15s;
+}
+.voice-search-btn:hover {
+    background: rgba(200, 169, 110, 0.15);
+    color: var(--gold-accent);
+}
+.voice-search-btn.voice-listening {
+    background: var(--gold-accent);
+    color: #fff;
+    animation: voicePulseDealer 1.2s infinite;
+}
+@keyframes voicePulseDealer {
+    0%   { box-shadow: 0 0 0 0 rgba(200, 169, 110, 0.5); }
+    70%  { box-shadow: 0 0 0 8px rgba(200, 169, 110, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(200, 169, 110, 0); }
+}
