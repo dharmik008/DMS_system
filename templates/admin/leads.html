@@ -20,9 +20,12 @@
 </div>
 
 <!-- Filters -->
-<form method="GET" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
-  <input type="text" name="search" value="{{ search }}" placeholder="Search name / phone…"
-    style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-1);font-size:13px;flex:1;min-width:160px;">
+<form method="GET" id="filterForm" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
+  <span style="position:relative;display:inline-block;flex:1;min-width:160px;">
+    <input type="text" name="search" id="leadsSearchInput" value="{{ search }}" placeholder="Search name / phone…"
+      style="padding:8px 32px 8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-1);font-size:13px;width:100%;">
+    <button type="button" id="leadsSearchMic" class="voice-search-btn" title="Search by voice"><i class="fas fa-microphone"></i></button>
+  </span>
   <select name="stage" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-1);font-size:13px;">
     <option value="">All Stages</option>
     {% for s in ['new','interested','test_drive','negotiation','lost','connected','not_connected'] %}
@@ -568,5 +571,9 @@ function showToast(msg,type){
   t.style.cssText='position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:8px;color:#fff;font-size:14px;z-index:9999;background:'+(type==='success'?'#22c55e':'#ef4444');
   document.body.appendChild(t);setTimeout(()=>t.remove(),3000);
 }
+</script>
+<script src="{{ url_for('static', filename='js/voice-search.js') }}"></script>
+<script>
+  attachVoiceSearch('leadsSearchInput', 'leadsSearchMic', { autoSubmitForm: 'filterForm' });
 </script>
 {% endblock %}
