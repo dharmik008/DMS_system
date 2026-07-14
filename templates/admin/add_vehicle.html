@@ -11,6 +11,7 @@
 <div class="card">
   <!-- enctype MUST be multipart/form-data for file uploads -->
   <form method="POST" action="{{ url_for('admin.add_vehicle') }}" enctype="multipart/form-data" id="addVehicleForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
     <!-- ── Vehicle Details ──────────────────────────────────────── -->
     <div style="margin-bottom:20px;">
@@ -334,6 +335,28 @@
     if (files.length > MAX) {
       showToast('Only first ' + MAX + ' images will be saved.', 'warn');
     }
+  });
+})();
+
+/* ── Major Issues: "None"/"NA" are mutually exclusive with real issues ───
+   - Checking "NA" or "None"  → uncheck every other option.
+   - Checking a real issue (Engine/Gearbox/AC/Suspension) → uncheck NA/None.
+──────────────────────────────────────────────────────────────────────── */
+(function () {
+  var wrap = document.getElementById('majorIssuesGroup');
+  if (!wrap) return;
+  var EXCLUSIVE = ['None', 'NA'];
+  var boxes = Array.prototype.slice.call(wrap.querySelectorAll('input[name="major_issues"]'));
+
+  boxes.forEach(function (box) {
+    box.addEventListener('change', function () {
+      if (!box.checked) return;
+      if (EXCLUSIVE.indexOf(box.value) !== -1) {
+        boxes.forEach(function (b) { if (b !== box) b.checked = false; });
+      } else {
+        boxes.forEach(function (b) { if (EXCLUSIVE.indexOf(b.value) !== -1) b.checked = false; });
+      }
+    });
   });
 })();
 
