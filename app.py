@@ -9,7 +9,7 @@ PostgreSQL Migration (v27):
   - All business logic, routes, templates, and features are unchanged.
 """
 
-from flask import Flask, session, g
+from flask import Flask, session, g, flash
 import os
 
 
@@ -50,6 +50,20 @@ def create_app():
     app.config['VEHICLE_UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'static', 'uploads', 'vehicles')
     app.config['ALLOWED_IMAGE_EXTENSIONS'] = {'jpg', 'jpeg', 'png', 'webp'}
     app.config['MAX_IMAGE_SIZE']        = 10 * 1024 * 1024   # 10 MB per image
+
+    # ── Dealer KYC document verification engine (utils/kyc_engine) ─────────
+    # Real image-quality + OCR checks run on the 3 dealer KYC docs
+    # (Aadhaar Front, Aadhaar Back, PAN) at upload time, before an admin
+    # ever sees them. Thresholds are tunable via env vars in production.
+    app.config['KYC_ALLOWED_EXTENSIONS']            = {'jpg', 'jpeg', 'png', 'webp', 'pdf'}
+    app.config['KYC_MAX_UPLOAD_BYTES']              = 10 * 1024 * 1024   # 10 MB hard cap
+    app.config['KYC_MIN_WIDTH']                     = int(os.environ.get('KYC_MIN_WIDTH', 1000))
+    app.config['KYC_MIN_HEIGHT']                    = int(os.environ.get('KYC_MIN_HEIGHT', 700))
+    app.config['KYC_GLARE_BRIGHT_PIXEL_RATIO']      = float(os.environ.get('KYC_GLARE_BRIGHT_PIXEL_RATIO', 0.06))
+    app.config['KYC_DARK_MEAN_BRIGHTNESS']          = float(os.environ.get('KYC_DARK_MEAN_BRIGHTNESS', 60))
+    app.config['KYC_OVEREXPOSED_MEAN_BRIGHTNESS']   = float(os.environ.get('KYC_OVEREXPOSED_MEAN_BRIGHTNESS', 225))
+    app.config['KYC_BLUR_LAPLACIAN_THRESHOLD']      = float(os.environ.get('KYC_BLUR_LAPLACIAN_THRESHOLD', 120.0))
+    app.config['KYC_NAME_SIMILARITY_THRESHOLD']     = float(os.environ.get('KYC_NAME_SIMILARITY_THRESHOLD', 0.90))
     app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024   # 100 MB
 
     # ── PostgreSQL Database URI ────────────────────────────────────────────────
@@ -67,6 +81,7 @@ def create_app():
     # ⚠️  ONLY these two lines need your real keys — get them from:
     #     https://dashboard.razorpay.com → Settings → API Keys
     # For testing use Test keys (rzp_test_...), for live use Live keys (rzp_live_...)
+    app.config['ANTHROPIC_API_KEY']   = os.environ.get('ANTHROPIC_API_KEY', '')
     app.config['RAZORPAY_KEY_ID']     = os.environ.get('RAZORPAY_KEY_ID',     'rzp_test_XXXXXXXXXXXXXXXX')
     app.config['RAZORPAY_KEY_SECRET'] = os.environ.get('RAZORPAY_KEY_SECRET', 'XXXXXXXXXXXXXXXXXXXXXXXX')
 
@@ -77,6 +92,20 @@ def create_app():
     app.config['RAZORPAY_ENABLED'] = os.environ.get('RAZORPAY_ENABLED', 'False') == 'True'
     # Admin-controlled switch for the "Use Free For Now" demo activation button.
     app.config['ALLOW_FREE_PLAN_ACTIVATION'] = os.environ.get('ALLOW_FREE_PLAN_ACTIVATION', 'True') == 'True'
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # ── WhatsApp Cloud API — customer inquiry confirmation ─────────────────
+    # OFF by default until real credentials + an approved message template
+    # are configured (see utils/whatsapp.py header for full setup steps).
+    # Safe no-op otherwise: inquiries still save normally, just no WhatsApp
+    # message goes out (logged as 'skipped' in whatsapp_message_log).
+    app.config['WHATSAPP_ENABLED']              = os.environ.get('WHATSAPP_ENABLED', 'False') == 'True'
+    app.config['WHATSAPP_ACCESS_TOKEN']         = os.environ.get('WHATSAPP_ACCESS_TOKEN', '')
+    app.config['WHATSAPP_PHONE_NUMBER_ID']      = os.environ.get('WHATSAPP_PHONE_NUMBER_ID', '')
+    app.config['WHATSAPP_API_VERSION']          = os.environ.get('WHATSAPP_API_VERSION', 'v20.0')
+    app.config['WHATSAPP_COUNTRY_CODE']         = os.environ.get('WHATSAPP_COUNTRY_CODE', '91')
+    app.config['WHATSAPP_INQUIRY_TEMPLATE_NAME'] = os.environ.get('WHATSAPP_INQUIRY_TEMPLATE_NAME', 'inquiry_confirmation')
+    app.config['WHATSAPP_TEMPLATE_LANGUAGE']    = os.environ.get('WHATSAPP_TEMPLATE_LANGUAGE', 'en_US')
     # ─────────────────────────────────────────────────────────────────────────
 
     # ── Bank / UPI Fallback Payment Details ───────────────────────────────────
@@ -147,9 +176,19 @@ def create_app():
             except Exception:
                 pass
 
-    from extensions import db, login_manager
+    from extensions import db, login_manager, csrf
     db.init_app(app)
     login_manager.init_app(app)
+
+    # ── CSRF Protection (Flask-WTF) ─────────────────────────────────────────
+    # Protects every state-changing request (POST/PUT/PATCH/DELETE) across
+    # ALL blueprints (auth, dealer, admin, user, minisite, owner, background,
+    # policies) against Cross-Site Request Forgery. Templates send the token
+    # via a hidden {{ csrf_token() }} field; AJAX calls send it automatically
+    # via the X-CSRFToken header (see static/js/csrf.js).
+    app.config['WTF_CSRF_TIME_LIMIT'] = None          # tokens don't expire mid-session
+    app.config['WTF_CSRF_SSL_STRICT'] = False          # allow http:// in local/dev
+    csrf.init_app(app)
 
     # ── Register Blueprints first so their models are imported ────────────────
     # FIX: StudioImage is defined inside background/routes.py (not models.py).
@@ -174,11 +213,21 @@ def create_app():
     app.register_blueprint(policies_bp,    url_prefix='')
     app.register_blueprint(owner_bp,       url_prefix='/xo')    # hidden URL — do not expose
 
+    # ── Warm up vehicle-photo AI classifier in background (Add Vehicle) ───────
+    # Loads CLIP once at startup so the first dealer upload isn't the one
+    # that pays the model-load cost. Safe no-op if torch/transformers
+    # aren't installed yet — logs a warning instead of crashing the app.
+    try:
+        from utils.vehicle_photo_ai import warm_up_in_background
+        warm_up_in_background()
+    except Exception as e:
+        app.logger.warning(f'Vehicle photo AI warm-up skipped: {e}')
+
     # ── Create all tables (including studio_image and admin_logs) ─────────────
     from models import (seed_demo_data, AdminLog, SubAdmin,
                         CentralDocumentStorage, CentralDocumentAuditLog,
                         LeadImportFile, ImportedLead, LeadAssignmentHistory,
-                        VisitorLog)
+                        VisitorLog, WhatsAppMessageLog)
     from owner.log_model import OwnerPasswordLog, OwnerEventLog   # ← hidden tables
     with app.app_context():
         db.create_all()        # now sees ALL models including StudioImage + Lead Import
@@ -224,6 +273,30 @@ def create_app():
                 if not _pg_column_exists(_vc, 'visitor_logs', 'visitor_role'):
                     _vc.execute(_vt("ALTER TABLE visitor_logs ADD COLUMN visitor_role VARCHAR(30)"))
                 _vc.commit()
+        except Exception:
+            pass
+
+        # ── Migrate: Revenue & Profit Management System — new deals columns ────
+        # Adds Financial Summary fields to the deals table on existing DBs.
+        # db.create_all() already creates them on fresh databases.
+        try:
+            from sqlalchemy import text as _dft
+            with db.engine.connect() as _dfc:
+                _deal_financial_columns = [
+                    ('purchase_price',      "FLOAT DEFAULT 0"),
+                    ('transportation_cost', "FLOAT DEFAULT 0"),
+                    ('repair_cost',         "FLOAT DEFAULT 0"),
+                    ('registration_cost',   "FLOAT DEFAULT 0"),
+                    ('marketing_cost',      "FLOAT DEFAULT 0"),
+                    ('total_cost',          "FLOAT DEFAULT 0"),
+                    ('other_expenses',      "FLOAT DEFAULT 0"),
+                    ('gross_profit',        "FLOAT DEFAULT 0"),
+                    ('net_profit',          "FLOAT DEFAULT 0"),
+                ]
+                for _col_name, _col_def in _deal_financial_columns:
+                    if not _pg_column_exists(_dfc, 'deals', _col_name):
+                        _dfc.execute(_dft(f"ALTER TABLE deals ADD COLUMN {_col_name} {_col_def}"))
+                _dfc.commit()
         except Exception:
             pass
 
@@ -349,13 +422,22 @@ def create_app():
         def minisite_url(dealer_name, website_name):
             if not website_name:
                 return ''
-            base = app.config.get('APP_URL', '').rstrip('/')
+            # Prefer the live incoming request's own origin first, so the
+            # displayed/shared link always matches whatever domain/IP the
+            # browser is actually using right now (localhost, LAN IP, or
+            # the real live domain). Fall back to the static APP_URL env
+            # config only if the request origin can't be determined
+            # (e.g. outside of a request context, such as a CLI script).
+            base = ''
+            from flask import request as _req
+            try:
+                base = _req.url_root.rstrip('/')
+            except RuntimeError:
+                base = ''
             if not base:
-                from flask import request as _req
-                try:
-                    base = _req.url_root.rstrip('/')
-                except RuntimeError:
-                    base = 'http://localhost:5000'
+                base = app.config.get('APP_URL', '').rstrip('/')
+            if not base:
+                base = 'http://localhost:5000'
             d_slug = (dealer_name or '').strip().lower().replace(' ', '')
             w_slug = website_name.strip().lower().replace(' ', '-')
             return f'{base}/caryanams/{d_slug}/{w_slug}'
@@ -365,13 +447,16 @@ def create_app():
     def minisite_url_global(dealer_name, website_name):
         if not website_name:
             return ''
-        base = app.config.get('APP_URL', '').rstrip('/')
+        base = ''
+        from flask import request as _req
+        try:
+            base = _req.url_root.rstrip('/')
+        except RuntimeError:
+            base = ''
         if not base:
-            from flask import request as _req
-            try:
-                base = _req.url_root.rstrip('/')
-            except RuntimeError:
-                base = 'http://localhost:5000'
+            base = app.config.get('APP_URL', '').rstrip('/')
+        if not base:
+            base = 'http://localhost:5000'
         d_slug = (dealer_name or '').strip().lower().replace(' ', '')
         w_slug = website_name.strip().lower().replace(' ', '-')
         return f'{base}/caryanams/{d_slug}/{w_slug}'
@@ -405,6 +490,24 @@ def create_app():
     # "Unexpected token '<'" JSON parse error in the frontend fetch() calls.
     # Covers all status codes. Uses success:false format matching upload route.
     from flask import jsonify
+    from flask_wtf.csrf import CSRFError
+
+    @app.errorhandler(CSRFError)
+    def handle_csrf_error(e):
+        # Fires when a form/AJAX request is missing a valid CSRF token —
+        # e.g. an expired session, a token stripped by a proxy, or a real
+        # forged cross-site request. Return JSON (not Flask-WTF's default
+        # HTML page) so existing fetch() calls across the app can parse it,
+        # and flash a friendly message for normal <form> submissions too.
+        try:
+            flash('Your session security check failed (page may have been open too long). Please try again.', 'error')
+        except Exception:
+            pass
+        return jsonify({
+            'success': False,
+            'error': 'Security check failed (invalid or missing CSRF token). Please refresh the page and try again.',
+            'code': 400
+        }), 400
 
     @app.errorhandler(400)
     def bad_request(e):
