@@ -41,6 +41,7 @@
           <td>
             {% if inq['status'] == 'pending' %}
             <form method="POST" action="{{ url_for('dealer.respond_inquiry', iid=inq['id']) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-sm btn-primary">Mark Responded</button>
             </form>
             {% else %}
