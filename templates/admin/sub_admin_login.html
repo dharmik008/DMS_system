@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<script src="{{ url_for('static', filename='js/csrf.js') }}"></script>
 <title>Sub-Admin Login — Caryanams</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -54,6 +56,7 @@
     <h2>Sub-Admin Login</h2>
     <p>Access is limited to your assigned permissions.</p>
     <form method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="login-field">
         <label>Username</label>
         <input type="text" name="username" placeholder="your_username" required autofocus autocomplete="username">
