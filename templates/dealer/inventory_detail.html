@@ -203,8 +203,17 @@
             <div class="cy-vehicle-variant">{{ vehicle['variant'] }}</div>
             {% endif %}
           </div>
-          <span class="badge badge-{{ 'success' if vehicle['status'] == 'available' else 'warning' if vehicle['status'] == 'reserved' else 'secondary' }}">
-            {{ vehicle['status']|title }}
+          <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <span class="badge badge-{{ 'success' if vehicle['status'] == 'available' else 'warning' if vehicle['status'] == 'reserved' else 'secondary' }}">
+              {{ vehicle['status']|title }}
+            </span>
+            {% if vehicle.get('approval_status') == 'approved' %}
+            <span class="badge badge-success" title="Approved by admin — visible to customers"><i class="fas fa-check-circle"></i> Approved</span>
+            {% elif vehicle.get('approval_status') == 'rejected' %}
+            <span class="badge badge-danger" title="Rejected by admin — not visible to customers"><i class="fas fa-times-circle"></i> Rejected</span>
+            {% else %}
+            <span class="badge badge-warning" title="Waiting for admin review — not visible to customers yet"><i class="fas fa-hourglass-half"></i> Pending Approval</span>
+            {% endif %}
           </span>
         </div>
 
@@ -342,6 +351,7 @@
         </a>
         <form method="POST" action="{{ url_for('dealer.delete_vehicle', vid=vehicle['id']) }}"
               onsubmit="return confirm('Delete this vehicle permanently?')" style="margin:0">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn" style="background:rgba(220,53,69,.1);color:var(--danger);border:1px solid rgba(220,53,69,.3)">
             <i class="fas fa-trash"></i> Delete
           </button>
