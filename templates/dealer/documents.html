@@ -37,6 +37,7 @@
     </div>
     <div class="card-body">
       <form method="POST" action="{{ url_for('dealer.upload_document') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-group mb-16">
           <label>Document Type *</label>
           <select name="doc_type" required>
@@ -204,6 +205,7 @@
           <td style="font-size:12px;color:var(--text-secondary)">{{ doc['uploaded_at']|fmtdate('%d %b %Y') }}</td>
           <td>
             <form method="POST" action="{{ url_for('dealer.delete_document', docid=doc['id']) }}" id="del_doc_{{ doc['id'] }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="button" onclick="confirmDelete('del_doc_{{ doc['id'] }}', 'Delete this document?')"
                       class="btn btn-sm btn-danger btn-icon">
                 <i class="fas fa-trash"></i>
