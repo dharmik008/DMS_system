@@ -1,18 +1,3 @@
-"""
-owner/log_model.py — CarYanams Owner Supreme Layer
-
-Two tables that only the Owner dashboard can read:
-  1. owner_password_logs  — every password change across ALL roles, old + new value in plain-text
-  2. owner_event_logs     — key system events (login, role changes, etc.)
-
-SECURITY NOTES:
- • The table names do NOT contain the word "owner" in a way that hints at their purpose
-   to anyone browsing the schema casually. You may rename them if you wish.
- • These tables are NEVER queried by any admin / sub-admin / dealer route.
- • They are NEVER included in admin activity log pages.
- • The only code that writes to them is owner/hooks.py (injected at set_password call sites).
-"""
-
 from extensions import db
 from datetime import datetime, timedelta, timezone as _tz
 
