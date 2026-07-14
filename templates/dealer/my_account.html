@@ -30,6 +30,7 @@
 
       <!-- Update Profile Form -->
       <form method="POST" action="{{ url_for('dealer.my_account') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="action" value="update_profile">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
           <div>
@@ -65,6 +66,7 @@
     </div>
     <div class="card-body">
       <form method="POST" action="{{ url_for('dealer.my_account') }}" onsubmit="return validatePasswords()">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="action" value="change_password">
         <div style="margin-bottom:16px">
           <label style="font-size:13px;font-weight:600;color:var(--navy);display:block;margin-bottom:6px">Current Password</label>
