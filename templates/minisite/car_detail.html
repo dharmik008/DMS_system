@@ -242,7 +242,7 @@ document.getElementById('inquiryForm').addEventListener('submit', async function
   const btn = form.querySelector('button');
   btn.disabled = true; btn.textContent = 'Sending…';
   try {
-    const res = await fetch('{{ url_for("minisite.submit_inquiry", website_name=website_name) }}', {
+    const res = await fetch('{{ url_for("minisite.submit_inquiry", dealer_name=dealer_name, website_name=website_name) }}', {
       method: 'POST',
       body: new FormData(form)
     });
