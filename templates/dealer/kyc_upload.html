@@ -3,6 +3,20 @@
 {% block page_title %}KYC Verification{% endblock %}
 
 {% block content %}
+<!-- Top loading bar — shown while KYC documents are being verified after submit -->
+<div id="kycTopLoader" style="position:fixed;top:0;left:0;height:3px;width:0%;
+     background:linear-gradient(90deg,var(--gold-accent,#ff9944),#ffcf8f);
+     z-index:99999;transition:width .4s ease;box-shadow:0 0 8px rgba(255,153,68,0.6);"></div>
+
+<div id="kycTopBanner" style="position:fixed;top:0;left:0;width:100%;display:none;
+     background:var(--navy,#1a2e4a);color:#fff;text-align:center;padding:10px 16px;
+     font-size:13px;font-weight:600;z-index:99998;align-items:center;justify-content:center;gap:10px;">
+  <span class="kyc-spinner" style="width:14px;height:14px;border-radius:50%;
+        border:2px solid rgba(255,255,255,0.35);border-top-color:#fff;
+        display:inline-block;animation:kycSpin .7s linear infinite;"></span>
+  Verifying your documents — please wait, this can take a few seconds…
+</div>
+
 <div style="max-width:760px;margin:0 auto;">
 
   <!-- Compute per-doc statuses -->
@@ -108,7 +122,8 @@
         {% if any_rejected %} &nbsp;·&nbsp; <strong style="color:#dc2626;">Only rejected documents need to be re-uploaded.</strong>{% endif %}
       </p>
 
-      <form method="POST" action="{{ url_for('dealer.kyc_submit') }}" enctype="multipart/form-data">
+      <form id="kycUploadForm" method="POST" action="{{ url_for('dealer.kyc_submit') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;margin-bottom:24px;">
 
           {% for field, label, icon in [('aadhaar_front','Aadhaar Front','🪪'),('aadhaar_back','Aadhaar Back','🪪'),('pan_card','PAN Card','💳')] %}
@@ -207,7 +222,7 @@
 
         </div>
 
-        <button type="submit" class="btn btn-primary" style="width:100%;padding:12px;">
+        <button type="submit" id="kycSubmitBtn" class="btn btn-primary" style="width:100%;padding:12px;">
           <i class="fas fa-cloud-upload-alt"></i> &nbsp;
           {% if any_rejected %}Re-submit KYC Documents{% else %}Submit KYC Documents{% endif %}
         </button>
@@ -292,6 +307,49 @@ function markNotifRead() {
   fetch('/dealer/api/notifications/mark-read', { method: 'POST' })
     .then(r => r.json()).then(d => { if (d.success) location.reload(); });
 }
+
+// ── Show a top loading bar + banner while documents are verified ──────────
+// This is a normal (non-AJAX) form POST — the engine (OCR + image-quality
+// checks) can take a few seconds per document, so give clear feedback
+// instead of leaving the page looking frozen until it reloads.
+(function () {
+  var form = document.querySelector('#kycUploadForm');
+  if (!form) return;
+
+  form.addEventListener('submit', function (e) {
+    // Require at least one file selected before showing the loader
+    var hasFile = Array.prototype.some.call(
+      form.querySelectorAll('input[type="file"]'),
+      function (inp) { return inp.files && inp.files.length > 0; }
+    );
+    if (!hasFile) return; // let normal "no file" flow happen, nothing to verify
+
+    var bar = document.getElementById('kycTopLoader');
+    var banner = document.getElementById('kycTopBanner');
+    var btn = document.getElementById('kycSubmitBtn');
+
+    banner.style.display = 'flex';
+    bar.style.width = '15%';
+    setTimeout(function () { bar.style.width = '55%'; }, 200);
+    setTimeout(function () { bar.style.width = '80%'; }, 1500);
+    setTimeout(function () { bar.style.width = '92%'; }, 4000);
+
+    if (btn) {
+      btn.disabled = true;
+      btn.style.opacity = '0.75';
+      btn.style.cursor = 'not-allowed';
+      btn.innerHTML = '<span class="kyc-spinner" style="width:14px;height:14px;border-radius:50%;' +
+        'border:2px solid rgba(255,255,255,0.35);border-top-color:#fff;display:inline-block;' +
+        'vertical-align:-2px;animation:kycSpin .7s linear infinite;"></span>&nbsp; Verifying documents…';
+    }
+    // Form still submits normally — the browser's own navigation to the
+    // response page will replace this DOM once verification finishes.
+  });
+})();
 </script>
+
+<style>
+@keyframes kycSpin { to { transform: rotate(360deg); } }
+</style>
 
 {% endblock %}
