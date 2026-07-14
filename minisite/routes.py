@@ -406,6 +406,18 @@ def contact(dealer_name, website_name):
         )
         db.session.add(inq)
         db.session.commit()
+
+        # WhatsApp confirmation to the customer — safe no-op until
+        # WHATSAPP_ENABLED + credentials are configured (utils/whatsapp.py).
+        try:
+            from utils.whatsapp import send_inquiry_confirmation
+            send_inquiry_confirmation(
+                name=inq.name, phone=inq.phone,
+                vehicle_label=None, inquiry_id=inq.id
+            )
+        except Exception:
+            pass
+
         flash('Message sent! We will get back to you soon.', 'success')
         return redirect(url_for('minisite.contact', dealer_name=dealer_name, website_name=website_name))
 
@@ -572,4 +584,21 @@ def submit_inquiry(dealer_name, website_name):
     )
     db.session.add(inq)
     db.session.commit()
+
+    # WhatsApp confirmation to the customer — safe no-op until
+    # WHATSAPP_ENABLED + credentials are configured (utils/whatsapp.py).
+    try:
+        from utils.whatsapp import send_inquiry_confirmation
+        vehicle_label = None
+        if vehicle_id:
+            v = Vehicle.query.get(vehicle_id)
+            if v:
+                vehicle_label = f"{v.make} {v.model}".strip()
+        send_inquiry_confirmation(
+            name=inq.name, phone=inq.phone,
+            vehicle_label=vehicle_label, inquiry_id=inq.id
+        )
+    except Exception:
+        pass
+
     return jsonify({'success': True, 'message': 'Inquiry submitted!'})
