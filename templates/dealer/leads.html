@@ -17,12 +17,13 @@
 </div>
 
 <!-- Filter + Actions -->
-<form method="GET">
+<form method="GET" id="filterForm">
   <input type="hidden" name="stage" value="{{ stage_filter }}">
   <div class="filter-bar mb-16" style="flex-wrap:wrap;gap:8px;">
     <div class="search-box" style="flex:1;min-width:160px;">
       <i class="fas fa-search"></i>
-      <input type="text" name="search" placeholder="Search name, phone..." value="{{ search }}">
+      <input type="text" name="search" id="dealerLeadsSearchInput" placeholder="Search name, phone..." value="{{ search }}">
+      <button type="button" id="dealerLeadsSearchMic" class="voice-search-btn" style="position:static;" title="Search by voice"><i class="fas fa-microphone"></i></button>
     </div>
     <button type="submit" class="btn btn-navy"><i class="fas fa-search"></i> Search</button>
     <a href="{{ url_for('dealer.add_lead') }}" class="btn btn-primary"><i class="fas fa-user-plus"></i> Add Lead</a>
@@ -96,6 +97,7 @@
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
               <a href="{{ url_for('dealer.edit_lead', lid=lead['id']) }}" class="btn btn-sm btn-primary">Edit</a>
               <form method="POST" action="{{ url_for('dealer.delete_lead', lid=lead['id']) }}" id="del_l_{{ lead['id'] }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="button" onclick="confirmDelete('del_l_{{ lead['id'] }}', 'Delete lead for {{ lead['customer_name'] }}?')" class="btn btn-sm btn-danger btn-icon"><i class="fas fa-trash"></i></button>
               </form>
             </div>
@@ -146,5 +148,9 @@ function confirmDelete(formId, msg) {
     document.getElementById(formId).submit();
   }
 }
+</script>
+<script src="{{ url_for('static', filename='js/voice-search.js') }}"></script>
+<script>
+  attachVoiceSearch('dealerLeadsSearchInput', 'dealerLeadsSearchMic', { autoSubmitForm: 'filterForm' });
 </script>
 {% endblock %}
