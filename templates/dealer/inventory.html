@@ -4,11 +4,12 @@
 
 {% block content %}
 <!-- Filter Bar -->
-<form method="GET">
+<form method="GET" id="filterForm">
 <div class="filter-bar">
   <div class="search-box" style="flex:1;min-width:220px">
     <i class="fas fa-search"></i>
-    <input type="text" name="search" placeholder="Search make, model, reg number..." value="{{ search }}">
+    <input type="text" name="search" id="inventorySearchInput" placeholder="Search make, model, reg number..." value="{{ search }}">
+    <button type="button" id="inventorySearchMic" class="voice-search-btn" style="position:static;" title="Search by voice"><i class="fas fa-microphone"></i></button>
   </div>
   <select name="status" onchange="this.form.submit()" style="width:140px">
     <option value="">All Status</option>
@@ -30,6 +31,28 @@
 </div>
 </form>
 
+<!-- Approval Status Tabs — read-only view of what admin has decided.
+     Dealers can filter by these but can never change the value itself
+     (that's admin-only, see db.py vehicle_update()/vehicle_create()). -->
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin:16px 0;">
+  <a href="{{ url_for('dealer.inventory', status=status_filter, fuel=fuel_filter, search=search) }}"
+     class="btn btn-sm {% if not approval_filter %}btn-navy{% else %}btn-outline{% endif %}">
+    All ({{ approval_counts.all }})
+  </a>
+  <a href="{{ url_for('dealer.inventory', status=status_filter, fuel=fuel_filter, search=search, approval='pending') }}"
+     class="btn btn-sm {% if approval_filter == 'pending' %}btn-navy{% else %}btn-outline{% endif %}">
+    ⏳ Pending ({{ approval_counts.pending }})
+  </a>
+  <a href="{{ url_for('dealer.inventory', status=status_filter, fuel=fuel_filter, search=search, approval='approved') }}"
+     class="btn btn-sm {% if approval_filter == 'approved' %}btn-navy{% else %}btn-outline{% endif %}">
+    ✅ Approved ({{ approval_counts.approved }})
+  </a>
+  <a href="{{ url_for('dealer.inventory', status=status_filter, fuel=fuel_filter, search=search, approval='rejected') }}"
+     class="btn btn-sm {% if approval_filter == 'rejected' %}btn-navy{% else %}btn-outline{% endif %}">
+    ❌ Rejected ({{ approval_counts.rejected }})
+  </a>
+</div>
+
 <!-- Vehicles Grid -->
 {% if vehicles['items'] %}
 <div class="vehicles-grid">
@@ -48,6 +71,15 @@
         <span class="badge {% if v['status'] == 'available' %}badge-success{% elif v['status'] == 'sold' %}badge-danger{% else %}badge-warning{% endif %}">
           {{ v['status'] }}
         </span>
+      </span>
+      <span style="position:absolute;top:10px;right:10px;{% if v['featured'] %}top:38px;{% endif %}">
+        {% if v['approval_status'] == 'approved' %}
+        <span class="badge badge-success" title="Approved by admin — visible to customers"><i class="fas fa-check-circle"></i> Approved</span>
+        {% elif v['approval_status'] == 'rejected' %}
+        <span class="badge badge-danger" title="Rejected by admin — not visible to customers"><i class="fas fa-times-circle"></i> Rejected</span>
+        {% else %}
+        <span class="badge badge-warning" title="Waiting for admin review — not visible to customers yet"><i class="fas fa-hourglass-half"></i> Pending Approval</span>
+        {% endif %}
       </span>
       {% if v['featured'] %}
       <span style="position:absolute;top:10px;left:10px">
@@ -68,6 +100,7 @@
         <a href="{{ url_for('dealer.inventory_detail', car_id=v['id']) }}" class="btn btn-sm btn-outline" style="justify-content:center" title="View full details"><i class="fas fa-eye"></i></a>
         <a href="{{ url_for('dealer.edit_vehicle', vid=v['id']) }}" class="btn btn-sm btn-primary" style="flex:1;justify-content:center"><i class="fas fa-edit"></i> Edit</a>
         <form method="POST" action="{{ url_for('dealer.delete_vehicle', vid=v['id']) }}" id="del_v_{{ v['id'] }}" style="flex:0">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="button" onclick="confirmDelete('del_v_{{ v['id'] }}', 'Delete {{ v['year'] }} {{ v['make'] }} {{ v['model'] }}?')" class="btn btn-sm btn-danger btn-icon">
             <i class="fas fa-trash"></i>
           </button>
@@ -108,17 +141,17 @@
 <!-- Pagination -->
 {% if vehicles['pages'] > 1 %}
 <div class="pagination">
-  <a href="{{ url_for('dealer.inventory', page=vehicles['prev_num'], status=status_filter, fuel=fuel_filter, search=search) }}" 
+  <a href="{{ url_for('dealer.inventory', page=vehicles['prev_num'], status=status_filter, fuel=fuel_filter, search=search, approval=approval_filter) }}" 
      class="page-link {% if not vehicles['has_prev'] %}disabled{% endif %}"><i class="fas fa-chevron-left"></i></a>
   {% for p in range(1, vehicles['pages']+1) %}
     {% if p %}
-      <a href="{{ url_for('dealer.inventory', page=p, status=status_filter, fuel=fuel_filter, search=search) }}" 
+      <a href="{{ url_for('dealer.inventory', page=p, status=status_filter, fuel=fuel_filter, search=search, approval=approval_filter) }}" 
          class="page-link {% if p == vehicles['page'] %}active{% endif %}">{{ p }}</a>
     {% else %}
       <span class="page-link">…</span>
     {% endif %}
   {% endfor %}
-  <a href="{{ url_for('dealer.inventory', page=vehicles['next_num'], status=status_filter, fuel=fuel_filter, search=search) }}" 
+  <a href="{{ url_for('dealer.inventory', page=vehicles['next_num'], status=status_filter, fuel=fuel_filter, search=search, approval=approval_filter) }}" 
      class="page-link {% if not vehicles['has_next'] %}disabled{% endif %}"><i class="fas fa-chevron-right"></i></a>
 </div>
 {% endif %}
@@ -138,5 +171,9 @@ function confirmDelete(formId, msg) {
     document.getElementById(formId).submit();
   }
 }
+</script>
+<script src="{{ url_for('static', filename='js/voice-search.js') }}"></script>
+<script>
+  attachVoiceSearch('inventorySearchInput', 'inventorySearchMic', { autoSubmitForm: 'filterForm' });
 </script>
 {% endblock %}
