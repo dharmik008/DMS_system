@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<script src="{{ url_for('static', filename='js/csrf.js') }}"></script>
 <title>User Login — {{ dealer.company_name or dealer.website_name or dealer.name }}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -51,6 +53,7 @@
       {% endwith %}
 
       <form method="POST" action="{{ url_for('auth.minisite_login', website_name=website_name) }}" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-group">
           <label><i class="fas fa-envelope"></i> Email / Username</label>
           <input type="text" name="email" placeholder="you@example.com" required autofocus>
