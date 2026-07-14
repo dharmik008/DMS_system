@@ -13,6 +13,7 @@
 
 <div class="card">
   <form method="POST" action="{{ url_for('admin.add_dealer') }}" id="addDealerForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div style="margin-bottom:24px;">
       <div class="card-title" style="margin-bottom:4px;">Dealership Information</div>
       <p style="color:var(--text-3);font-size:0.82rem;">Basic details about the dealership</p>
