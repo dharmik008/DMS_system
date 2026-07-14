@@ -1063,11 +1063,8 @@ def all_vehicles():
     from models import Vehicle, User
     vehicles = Vehicle.query.order_by(Vehicle.created_at.desc()).all()
     dealers = User.query.filter_by(role='dealer').all()
-    pending = [v for v in vehicles if v.approval_status == 'pending']
-    approved = [v for v in vehicles if v.approval_status == 'approved']
-    rejected = [v for v in vehicles if v.approval_status == 'rejected']
-    return render_template('admin/vehicles.html', vehicles=vehicles, pending=pending,
-                           approved=approved, rejected=rejected, dealers=dealers, page='vehicles')
+    return render_template('admin/vehicles.html', vehicles=vehicles,
+                           dealers=dealers, page='vehicles')
 
 
 @admin_bp.route('/vehicles/<int:vehicle_id>')
@@ -1180,13 +1177,6 @@ def edit_vehicle(vehicle_id):
         reg_number = request.form.get('reg_number', '').strip()
         if reg_number:
             vehicle.registration_number = reg_number.upper()
-        approval = request.form.get('approval_status', '').strip()
-        if approval:
-            vehicle.approval_status = approval
-            if approval == 'approved':
-                vehicle.status = 'available'
-            elif approval == 'rejected':
-                vehicle.status = 'rejected'
         # new condition detail fields
         vehicle.accident_history   = request.form.get('accident_history', vehicle.accident_history or 'NA').strip()
         vehicle.loan_status        = request.form.get('loan_status', vehicle.loan_status or 'NA').strip()
@@ -1202,52 +1192,6 @@ def edit_vehicle(vehicle_id):
         flash('Vehicle updated successfully!', 'success')
         return redirect(url_for('admin.all_vehicles'))
     return render_template('admin/edit_vehicle.html', vehicle=vehicle, dealers=dealers, page='vehicles')
-
-
-@admin_bp.route('/api/vehicles/<int:vehicle_id>/approve', methods=['POST'])
-@require_permission_api('vehicles')
-def approve_vehicle(vehicle_id):
-    from models import Vehicle
-    from extensions import db
-    v = Vehicle.query.get_or_404(vehicle_id)
-    v.approval_status = 'approved'
-    v.status = 'available'
-    db.session.commit()
-    log_admin_action(
-        f"Approved vehicle {v.id} ({v.make} {v.model})", 'Vehicles')
-    return jsonify({'success': True, 'message': 'Vehicle approved'})
-
-
-@admin_bp.route('/api/vehicles/<int:vehicle_id>/reject', methods=['POST'])
-@require_permission_api('vehicles')
-def reject_vehicle(vehicle_id):
-    from models import Vehicle
-    from extensions import db
-    v = Vehicle.query.get_or_404(vehicle_id)
-    v.approval_status = 'rejected'
-    v.status = 'rejected'
-    db.session.commit()
-    log_admin_action(
-        f"Rejected vehicle {v.id} ({v.make} {v.model})", 'Vehicles')
-    return jsonify({'success': True, 'message': 'Vehicle rejected'})
-
-
-@admin_bp.route('/api/vehicles/<int:vehicle_id>/set-approval', methods=['POST'])
-@require_permission_api('vehicles')
-def set_vehicle_approval(vehicle_id):
-    from models import Vehicle
-    from extensions import db
-    v = Vehicle.query.get_or_404(vehicle_id)
-    data = request.get_json(silent=True) or {}
-    status = data.get('status', 'pending')
-    v.approval_status = status
-    if status == 'approved':
-        v.status = 'available'
-    elif status == 'rejected':
-        v.status = 'rejected'
-    db.session.commit()
-    log_admin_action(f"Set vehicle {v.id} approval to {status}", 'Vehicles')
-    return jsonify({'success': True, 'message': f'Vehicle set to {status}'})
 
 
 @admin_bp.route('/api/vehicles/<int:vehicle_id>/delete', methods=['POST'])
@@ -3233,62 +3177,6 @@ def cds_download(record_id):
         download_name=rec.original_name or rec.file_name,
         mimetype=mime or 'application/octet-stream',
     )
-
-
-@admin_bp.route('/document-storage/<int:record_id>/reassign', methods=['POST'])
-@super_admin_only
-def cds_reassign_doc(record_id):
-    """Admin (Super Admin only): Reassign a single document to another dealer."""
-    from db import cds_reassign, cds_get
-    from models import User
-
-    rec = cds_get(record_id)
-    if not rec:
-        flash('Document not found.', 'error')
-        return redirect(url_for('admin.document_storage'))
-
-    if rec.status == 'deleted':
-        flash('Cannot reassign a deleted document.', 'error')
-        return redirect(url_for('admin.document_storage'))
-
-    new_dealer_id = request.form.get('new_dealer_id', type=int)
-    note          = request.form.get('note', '').strip()
-
-    if not new_dealer_id:
-        flash('Please select a dealer to reassign to.', 'error')
-        return redirect(url_for('admin.document_storage'))
-
-    if not note:
-        flash('A reason for reassignment is required.', 'error')
-        return redirect(url_for('admin.document_storage'))
-
-    if new_dealer_id == rec.dealer_id:
-        flash('Document is already assigned to this dealer.', 'error')
-        return redirect(url_for('admin.document_storage'))
-
-    new_dealer = User.query.get(new_dealer_id)
-    actor, role_label = _resolve_role_and_user()
-
-    ok = cds_reassign(
-        record_id,
-        new_dealer_id=new_dealer_id,
-        note=note,
-        performed_by=actor,
-        user_role=role_label,
-    )
-    if ok:
-        log_admin_action(
-            f"Reassigned doc ID {record_id} to {new_dealer.name if new_dealer else new_dealer_id}",
-            'Documents'
-        )
-        flash(
-            f'Document reassigned to {new_dealer.name if new_dealer else "new dealer"} successfully. '
-            f'It is now visible only to the new dealer.',
-            'success'
-        )
-    else:
-        flash('Reassignment failed — please check your inputs.', 'error')
-    return redirect(url_for('admin.document_storage'))
 
 
 @admin_bp.route('/document-storage/<int:record_id>/soft-delete', methods=['POST'])
