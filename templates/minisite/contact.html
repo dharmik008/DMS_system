@@ -17,6 +17,7 @@
     <div style="background:#fff;border-radius:16px;padding:32px;box-shadow:0 4px 20px rgba(0,0,0,.07)">
       <h2 style="font-size:22px;font-weight:800;margin-bottom:24px">Send a Message</h2>
       <form method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div style="margin-bottom:16px">
           <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:6px">Your Name *</label>
           <input name="name" required style="width:100%;padding:12px 14px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none" placeholder="Full Name" />
