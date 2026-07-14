@@ -18,7 +18,10 @@
 <div class="card">
   <div class="card-header">
     <span class="card-title">All Deals</span>
-    <input type="text" placeholder="Search deals..." oninput="filterTable(this,'dealsTable')" style="padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-1);font-size:13px;">
+    <span style="position:relative;display:inline-block;">
+      <input type="text" id="salesSearchInput" placeholder="Search deals..." oninput="filterTable(this,'dealsTable')" style="padding:6px 32px 6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-1);font-size:13px;">
+      <button type="button" id="salesSearchMic" class="voice-search-btn" title="Search by voice"><i class="fas fa-microphone"></i></button>
+    </span>
   </div>
   <div class="table-wrapper">
   <table class="table" id="dealsTable">
@@ -53,5 +56,9 @@ function filterTable(inp, tableId) {
     row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
 }
+</script>
+<script src="{{ url_for('static', filename='js/voice-search.js') }}"></script>
+<script>
+  attachVoiceSearch('salesSearchInput', 'salesSearchMic');
 </script>
 {% endblock %}
