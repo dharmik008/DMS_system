@@ -1,29 +1,3 @@
-"""
-owner/hooks.py — CarYanams Owner Supreme Layer — Silent Interceptors
-
-These functions are called from:
-  • admin/routes.py      — super admin password change, sub-admin creation/edit,
-                           dealer/user admin resets
-  • auth/routes.py       — forgot-password flow, initial dealer/user registration
-  • dealer/routes.py     — dealer self-service password change
-
-They write to owner_password_logs / owner_event_logs and NEVER write to
-admin_logs, visitor_logs, or any other table visible to other roles.
-
-Usage pattern (inside the route, AFTER the plain-text password is known
-but BEFORE set_password() is called):
-    from owner.hooks import owner_record_password_change
-    owner_record_password_change(
-        actor_role='Super Admin',
-        actor_name='admin',
-        target_role='Sub Admin',
-        target_name=sa.username,
-        old_password=None,          # pass old if you have it
-        new_password=new_pw,
-        change_type='admin_reset',
-    )
-"""
-
 from flask import request as _flask_request
 
 
