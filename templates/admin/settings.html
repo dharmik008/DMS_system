@@ -12,6 +12,7 @@
     <div class="card-header"><span class="card-title">General Settings</span></div>
     <div style="padding:20px;">
       <form method="POST" action="{{ url_for('admin.save_settings') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {% for key, label in [('company_name','Company Name'),('support_email','Support Email'),('contact','Contact'),('timezone','Timezone'),('currency','Currency'),('address','Address')] %}
         <div class="form-group" style="margin-bottom:14px;">
           <label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:5px;">{{ label }}</label>
