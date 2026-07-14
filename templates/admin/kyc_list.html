@@ -42,8 +42,11 @@
 <div class="card">
   <div class="card-header">
     <span class="card-title">All Dealers KYC Status</span>
-    <input type="text" placeholder="Search dealers…" oninput="filterTable(this,'kycTable')"
-      style="padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-1);font-size:13px;">
+    <span style="position:relative;display:inline-block;">
+      <input type="text" id="kycSearchInput" placeholder="Search dealers…" oninput="filterTable(this,'kycTable')"
+        style="padding:6px 32px 6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-1);font-size:13px;">
+      <button type="button" id="kycSearchMic" class="voice-search-btn" title="Search by voice"><i class="fas fa-microphone"></i></button>
+    </span>
   </div>
   <div class="table-wrapper">
   <table class="table" id="kycTable">
@@ -452,5 +455,9 @@ function showToast(msg, type) {
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 3500);
 }
+</script>
+<script src="{{ url_for('static', filename='js/voice-search.js') }}"></script>
+<script>
+  attachVoiceSearch('kycSearchInput', 'kycSearchMic');
 </script>
 {% endblock %}
