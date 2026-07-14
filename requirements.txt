@@ -23,8 +23,21 @@ itsdangerous==2.2.0
 Pillow==10.4.0
 opencv-python-headless==4.9.0.80
 
+# ── Dealer KYC Verification Engine (utils/kyc_engine) ─────────────────────────
+easyocr==1.7.1                  # primary OCR engine for KYC document text extraction
+pytesseract==0.3.10             # fallback OCR (requires the tesseract-ocr binary on the host)
+imagehash==4.3.1                # perceptual hashing for KYC duplicate-document detection
+PyMuPDF==1.24.9                 # renders page 1 of PDF KYC uploads to an image for validation
+
 # ── AI Background Removal (IMPORTANT COMPATIBILITY FIX) ───────────────────────
 numpy==1.26.4
+
+# Vehicle photo AI verification (Add Vehicle — 7 mandatory angle photos)
+# NOTE: torch is a large install (~1-2GB) and the first run downloads the
+# CLIP model weights (~600MB) from HuggingFace. After that first download
+# it runs fully offline / free, no API key needed.
+torch==2.4.1
+transformers==4.44.2
 onnxruntime==1.18.1
 rembg==2.0.57
 pooch==1.8.2
