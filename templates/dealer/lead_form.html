@@ -1,10 +1,11 @@
- {% extends "dealer/base.html" %}
+{% extends "dealer/base.html" %}
 {% block title %}{{ 'Edit' if lead else 'Add' }} Lead — Caryanams{% endblock %}
 {% block page_title %}{{ 'Edit' if lead else 'Add' }} Lead{% endblock %}
 
 {% block content %}
 <div style="max-width:760px">
   <form method="POST" onsubmit="return validateLeadForm()">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="card mb-24">
       <div class="card-header"><div class="card-title"><i class="fas fa-user" style="margin-right:8px;color:var(--gold-accent)"></i>Customer Details</div></div>
       <div class="card-body">
