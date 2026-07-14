@@ -19,6 +19,7 @@
     {% endwith %}
 
     <form method="POST" action="{{ url_for('user.contact') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div style="display:flex;flex-direction:column;gap:14px">
         <div>
           <label style="font-size:12px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:6px">Name *</label>
