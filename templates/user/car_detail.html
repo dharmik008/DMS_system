@@ -243,6 +243,7 @@
       {% endif %}
 
       <form method="POST" action="{{ url_for('user.inquire', vid=vehicle.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input class="inq-input" type="text" name="name"
                placeholder="Your Name *"
                value="{{ prefill_name }}"
@@ -362,6 +363,7 @@
   <div class="td-modal-box">
     <h3><i class="fas fa-car-side" style="color:var(--navy);margin-right:8px"></i>Book Test Drive</h3>
     <form method="POST" action="{{ url_for('user.inquire', vid=vehicle.id) }}" id="tdForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input class="inq-input" id="td_name" name="name" type="text"
              placeholder="Your Name *"
              value="{{ logged_user.name if logged_user else '' }}"
