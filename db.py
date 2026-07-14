@@ -13,7 +13,9 @@ def parse_date(value):
     return None
 
 from sqlalchemy import func, or_
-from models import db, User, Agent, Vehicle, Lead, Deal, Document, Inquiry, VehicleImage, CentralDocumentStorage, CentralDocumentAuditLog
+from models import (db, User, Agent, Vehicle, Lead, Deal, Document, Inquiry, VehicleImage,
+                     CentralDocumentStorage, CentralDocumentAuditLog,
+                     compute_deal_financials, DEAL_REVENUE_STATUSES)
 
 # ========== USER FUNCTIONS ==========
 
@@ -210,6 +212,13 @@ def vehicle_create(data):
         rc_available=data.get('rc_available', True),
         featured=data.get('featured', False),
         image_filename=data.get('image_filename', 'None'),
+        # ── Featured Listing directly controls marketplace approval ─────────
+        # No admin approval step exists. When the dealer checks "Featured
+        # Listing", the vehicle is published to the marketplace immediately
+        # (approval_status='approved'); otherwise it stays 'pending' (not
+        # marketplace-listed), matching the previous default minus the admin
+        # step.
+        approval_status='approved' if data.get('featured', False) else 'pending',
         # new condition detail fields
         accident_history=data.get('accident_history', 'NA'),
         loan_status=data.get('loan_status', 'NA'),
@@ -228,6 +237,11 @@ def vehicle_create(data):
 
 
 def vehicle_update(vehicle_id, data):
+    """NOTE: this is the DEALER-facing update path (called only from
+    dealer/routes.py). Admin's own edit route sets Vehicle attributes
+    directly and does not go through here. 'approval_status' is therefore
+    hard-blocked below — a dealer must never be able to approve/reject
+    their own listing, no matter what ends up in `data`."""
     vehicle = Vehicle.query.get(vehicle_id)
 
     if vehicle:
@@ -240,7 +254,8 @@ def vehicle_update(vehicle_id, data):
             if hasattr(vehicle, key) and key not in [
                 'id',
                 'dealer_id',
-                'created_at'
+                'created_at',
+                'approval_status',   # admin-only — never settable by a dealer
             ]:
                 setattr(vehicle, key, value)
 
@@ -308,13 +323,15 @@ def vehicle_get(vehicle_id):
     return data
 
 
-def vehicles_get_by_dealer(dealer_id, status=None, search='', fuel=None, page=1, per_page=12):
+def vehicles_get_by_dealer(dealer_id, status=None, search='', fuel=None, approval=None, page=1, per_page=12):
     query = Vehicle.query.filter_by(dealer_id=dealer_id)
 
     if status and status != '':
         query = query.filter_by(status=status)
     if fuel and fuel != '':
         query = query.filter_by(fuel_type=fuel)
+    if approval and approval != '':
+        query = query.filter_by(approval_status=approval)
     if search:
         query = query.filter(
             or_(
@@ -617,8 +634,17 @@ def deal_create(data):
         booking_amount=data.get('booking_amount', 0),
         gst_amount=gst_amount,
         total_amount=total_amount,
-        notes=data.get('notes', '')
+        notes=data.get('notes', ''),
+        # ── Financial Summary inputs ───────────────────────────────────────
+        purchase_price=data.get('purchase_price', 0),
+        transportation_cost=data.get('transportation_cost', 0),
+        repair_cost=data.get('repair_cost', 0),
+        registration_cost=data.get('registration_cost', 0),
+        marketing_cost=data.get('marketing_cost', 0),
+        other_expenses=data.get('other_expenses', 0),
     )
+    # Auto-calculate Total Cost / Gross Profit / Net Profit (single source of truth)
+    deal.recompute_financials()
     db.session.add(deal)
     db.session.commit()
 
@@ -640,6 +666,13 @@ def deal_update(deal_id, data):
         if 'final_price' in data:
             deal.gst_amount = deal.final_price * 0.18
             deal.total_amount = deal.final_price + deal.gst_amount
+        # Auto-calculate Total Cost / Gross Profit / Net Profit whenever any
+        # financial field (or the selling price) changes — single source of truth.
+        _financial_keys = ('purchase_price', 'transportation_cost', 'repair_cost',
+                            'registration_cost', 'marketing_cost', 'other_expenses',
+                            'final_price')
+        if any(k in data for k in _financial_keys):
+            deal.recompute_financials()
         # Sync vehicle status when deal reaches terminal states
         if 'status' in data:
             vehicle = Vehicle.query.get(deal.vehicle_id)
@@ -700,20 +733,46 @@ def deals_get_status_counts(dealer_id):
 
 
 def deals_get_financial_summary(dealer_id):
-    delivered_deals = Deal.query.filter_by(
-        dealer_id=dealer_id, status='delivered').all()
-    total_revenue = sum(d.final_price for d in delivered_deals)
-    total_gst = sum(d.gst_amount for d in delivered_deals)
+    """
+    Single source of truth for every revenue/profit number shown on the
+    Dashboard, Finance and Reports pages.
+
+    NOTE: "delivered" here now means the deal is in one of DEAL_REVENUE_STATUSES
+    ('finalized' or 'delivered') — i.e. Completed/Delivered deals only. Draft,
+    Negotiation, Booked (Pending) and Cancelled deals are always excluded.
+    """
+    closed_deals = Deal.query.filter(
+        Deal.dealer_id == dealer_id,
+        Deal.status.in_(DEAL_REVENUE_STATUSES)
+    ).all()
+
+    total_revenue = sum(d.final_price or 0 for d in closed_deals)          # kept for backward-compat
+    total_gst = sum(d.gst_amount or 0 for d in closed_deals)
     loan_deals = sum(
-        1 for d in delivered_deals if d.payment_mode in ['loan', 'emi'])
-    cash_deals = sum(1 for d in delivered_deals if d.payment_mode == 'cash')
+        1 for d in closed_deals if d.payment_mode in ['loan', 'emi'])
+    cash_deals = sum(1 for d in closed_deals if d.payment_mode == 'cash')
+
+    # ── New Revenue & Profit Management KPIs ───────────────────────────────
+    total_sales = sum(d.final_price or 0 for d in closed_deals)            # Total Selling Price
+    total_purchase_cost = sum(d.purchase_price or 0 for d in closed_deals)
+    total_cost = sum(d.total_cost or 0 for d in closed_deals)
+    gross_profit = sum(d.gross_profit or 0 for d in closed_deals)
+    net_revenue = sum(d.net_profit or 0 for d in closed_deals)             # Net Revenue = sum(Net Profit)
+    total_vehicles_sold = len(closed_deals)
 
     return {
         'total_revenue': total_revenue,
         'total_gst': total_gst,
-        'total_deals': len(delivered_deals),
+        'total_deals': len(closed_deals),
         'loan_deals': loan_deals,
-        'cash_deals': cash_deals
+        'cash_deals': cash_deals,
+        # new KPIs
+        'total_sales': total_sales,
+        'total_purchase_cost': total_purchase_cost,
+        'total_cost': total_cost,
+        'gross_profit': gross_profit,
+        'net_revenue': net_revenue,
+        'total_vehicles_sold': total_vehicles_sold,
     }
 
 
@@ -830,6 +889,24 @@ def inquiry_create(data):
     )
     db.session.add(inquiry)
     db.session.commit()
+
+    # ── WhatsApp confirmation to the customer (fire-and-forget) ────────────
+    # Safe no-op until WHATSAPP_ENABLED + credentials are configured — see
+    # utils/whatsapp.py. Never blocks or fails this function's own return.
+    try:
+        from utils.whatsapp import send_inquiry_confirmation
+        vehicle_label = None
+        if data.get('vehicle_id'):
+            v = Vehicle.query.get(data['vehicle_id'])
+            if v:
+                vehicle_label = f"{v.make} {v.model}".strip()
+        send_inquiry_confirmation(
+            name=data['name'], phone=data['phone'],
+            vehicle_label=vehicle_label, inquiry_id=inquiry.id
+        )
+    except Exception:
+        pass
+
     return inquiry.id
 
 
@@ -960,74 +1037,6 @@ def cds_get(record_id: int):
     from models import CentralDocumentStorage
     return CentralDocumentStorage.query.get(record_id)
 
-
-
-def cds_reassign(record_id: int, new_dealer_id: int, note: str,
-                 performed_by: str = 'admin', user_role: str = 'Super Admin') -> bool:
-    """
-    Reassign a single document's ownership to a different dealer.
-
-    Business rules enforced:
-      - Document must exist and be 'active' (cannot reassign a deleted doc)
-      - new_dealer_id must differ from current dealer_id
-      - note must be non-empty (caller validates; we enforce here too)
-    On success:
-      - rec.dealer_id  → new_dealer_id
-      - rec.ownership_note → note
-      - Audit log entry with full dealer name / display_id snapshots
-    The original dealer instantly loses visibility (dealer_id changed).
-    The new dealer instantly gains visibility (their active docs include it).
-    File on disk is NOT moved or renamed.
-    """
-    from models import CentralDocumentStorage, CentralDocumentAuditLog, User
-
-    rec        = CentralDocumentStorage.query.get(record_id)
-    new_dealer = User.query.get(new_dealer_id)
-
-    # Guard: record / new dealer must exist
-    if not rec or not new_dealer:
-        return False
-
-    # Guard: cannot reassign deleted document
-    if rec.status == 'deleted':
-        return False
-
-    # Guard: must be a different dealer
-    old_dealer_id = rec.dealer_id
-    if old_dealer_id == new_dealer_id:
-        return False
-
-    # Guard: note mandatory
-    if not note or not note.strip():
-        return False
-
-    # Snapshot old dealer info for audit
-    old_dealer = User.query.get(old_dealer_id) if old_dealer_id else None
-    old_dealer_name    = old_dealer.name        if old_dealer else 'Unknown'
-    old_display_id     = (old_dealer.display_id or f'D{old_dealer_id}') if old_dealer else str(old_dealer_id)
-    new_dealer_name    = new_dealer.name
-    new_display_id     = new_dealer.display_id or f'D{new_dealer_id}'
-
-    # Perform the reassignment
-    rec.dealer_id      = new_dealer_id
-    rec.ownership_note = note.strip()
-
-    audit = CentralDocumentAuditLog(
-        document_id   = rec.id,
-        action        = 'reassigned',
-        performed_by  = performed_by,
-        user_role     = user_role,
-        dealer_name   = new_dealer_name,
-        document_type = rec.document_type,
-        notes         = (
-            f"Reassigned from {old_dealer_name} ({old_display_id}) "
-            f"→ {new_dealer_name} ({new_display_id}). "
-            f"Reason: {note.strip()}"
-        ),
-    )
-    db.session.add(audit)
-    db.session.commit()
-    return True
 
 
 def cds_soft_delete(record_id: int, performed_by: str = 'admin', user_role: str = 'Super Admin') -> bool:
