@@ -9,7 +9,12 @@
     <form method="GET" action="{{ url_for('user.listings') }}" id="filterForm">
       <div class="filter-group">
         <label>Search</label>
-        <input type="text" name="search" placeholder="Brand, model, variant..." value="{{ search or '' }}">
+        <div style="position:relative">
+          <input type="text" name="search" id="listingsSearchInput" placeholder="Brand, model, variant..." value="{{ search or '' }}" style="width:100%;padding-right:36px;box-sizing:border-box">
+          <button type="button" id="listingsSearchMic" class="voice-search-btn" title="Search by voice">
+            <i class="fas fa-microphone"></i>
+          </button>
+        </div>
       </div>
       <div class="filter-group">
         <label>Brand / Make</label>
@@ -164,4 +169,13 @@
     {% endif %}
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/voice-search.js') }}"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    attachVoiceSearch('listingsSearchInput', 'listingsSearchMic', { autoSubmitForm: 'filterForm' });
+  });
+</script>
 {% endblock %}
