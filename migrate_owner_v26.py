@@ -1,8 +1,3 @@
-"""
-migrate_owner_v26.py — Add is_locked + force_password_change columns to users table.
-Run ONCE after deploying v26:
-    python migrate_owner_v26.py
-"""
 from app import app, db
 from sqlalchemy import text
 
