@@ -53,8 +53,8 @@ def login():
             session.pop('minisite_return_url', None)
 
     if request.method == 'POST':
-        email = request.form.get('email')
-        password = request.form.get('password')
+        email = (request.form.get('email') or '').strip()
+        password = (request.form.get('password') or '').strip()
         # Carry the minisite return URL through the POST
         post_return_url = request.form.get('return_url', '').strip()
         if post_return_url.startswith('/dealer/') or post_return_url.startswith('/caryanams/'):
@@ -354,10 +354,20 @@ def forgot_password():
 
 # ── Forgot Password: verify email + phone, then reset ─────────────────────────
 
+OTP_VALID_MINUTES = 10
+OTP_RESEND_COOLDOWN_SECONDS = 30
+
+
 @auth_bp.route('/api/forgot-password/verify', methods=['POST'])
 def forgot_password_verify():
-    """Step 1 — check that email + phone both match a registered account."""
+    """Step 1 - the user picks ONE method (email OR phone), enters only that
+    field, and the OTP is sent ONLY on that single channel. No token is
+    issued yet; the code must be confirmed via /api/forgot-password/verify-otp
+    before a reset token is granted."""
     from flask import jsonify
+    import time
+    import secrets
+
     data = request.get_json(silent=True) or {}
     email = (data.get('email') or '').strip().lower()
     phone_raw = (data.get('phone') or '').strip()
@@ -368,24 +378,103 @@ def forgot_password_verify():
         phone_digits = phone_digits[2:]   # strip country code
     phone_digits = phone_digits[-10:]     # keep last 10
 
-    if not email or len(phone_digits) != 10:
-        return jsonify({'success': False, 'message': 'Please enter a valid email and 10-digit mobile number.'})
+    # Which single channel to use. The frontend sends channel='email' or
+    # channel='sms' based on which tab the user picked. Fall back to
+    # inferring it from whichever field was actually filled in.
+    channel = (data.get('channel') or '').strip().lower()
+    if channel not in ('email', 'sms'):
+        channel = 'sms' if (phone_digits and not email) else 'email'
 
-    # Case-insensitive email lookup so capitalisation differences don't block valid users
-    user = User.query.filter(User.email.ilike(email)).first()
-    if not user:
-        return jsonify({'success': False, 'message': 'No account found with this email address.'})
+    user = None
+    if channel == 'email':
+        if not email or '@' not in email:
+            return jsonify({'success': False, 'message': 'Please enter a valid email address.'})
+        # Case-insensitive email lookup so capitalisation differences don't block valid users
+        user = User.query.filter(User.email.ilike(email)).first()
+        if not user:
+            return jsonify({'success': False, 'message': 'No account found with this email address.'})
+    else:  # channel == 'sms'
+        if len(phone_digits) != 10:
+            return jsonify({'success': False, 'message': 'Please enter a valid 10-digit mobile number.'})
+        # phone stored as "+91XXXXXXXXXX" - match on the last 10 digits only
+        user = User.query.filter(User.phone.like(f'%{phone_digits}')).first()
+        if not user:
+            return jsonify({'success': False, 'message': 'No account found with this mobile number.'})
 
-    # phone stored as "+91XXXXXXXXXX" — compare last 10 digits only
-    stored_digits = ''.join(c for c in (user.phone or '') if c.isdigit())[-10:]
-    if stored_digits != phone_digits:
-        return jsonify({'success': False, 'message': 'Mobile number does not match our records.'})
+    # Throttle resends so the same session can't hammer SMTP/SMS
+    last_sent = session.get('fp_otp_sent_at')
+    if last_sent and (time.time() - last_sent) < OTP_RESEND_COOLDOWN_SECONDS:
+        wait = int(OTP_RESEND_COOLDOWN_SECONDS - (time.time() - last_sent))
+        return jsonify({'success': False, 'message': f'Please wait {wait}s before requesting another code.'})
 
-    # Both match — store a short-lived token in session so the reset step is gated
+    # Generate a real 6-digit OTP and send it on the ONE chosen channel only
+    otp = f'{secrets.randbelow(1000000):06d}'
+
+    if channel == 'email':
+        try:
+            from utils.mailer import send_otp_email
+            send_otp_email(user.email, otp, user_name=user.name, valid_minutes=OTP_VALID_MINUTES)
+        except Exception as e:
+            return jsonify({'success': False, 'message': f'Could not send email: {e}'})
+        masked = (email[0] + '***@' + email.split('@', 1)[1]) if '@' in email else email
+        message = f'A verification code was sent to {masked}.'
+    else:
+        try:
+            from utils.sms_otp import send_sms_otp
+            send_sms_otp(phone_digits, otp)
+        except Exception as e:
+            return jsonify({'success': False, 'message': f'Could not send SMS: {e}'})
+        message = f'A verification code was sent to your mobile number ending in {phone_digits[-4:]}.'
+
+    session['fp_otp'] = otp
+    session['fp_otp_user_id'] = user.id
+    session['fp_otp_expires'] = time.time() + OTP_VALID_MINUTES * 60
+    session['fp_otp_sent_at'] = time.time()
+    session['fp_otp_attempts'] = 0
+    session['fp_otp_channel'] = channel
+
+    return jsonify({'success': True, 'message': message, 'channel': channel})
+
+
+@auth_bp.route('/api/forgot-password/verify-otp', methods=['POST'])
+def forgot_password_verify_otp():
+    """Step 2 — confirm the code that was emailed in step 1, then issue the
+    short-lived reset token needed by /api/forgot-password/reset."""
+    from flask import jsonify
+    import time
     import secrets
+
+    data = request.get_json(silent=True) or {}
+    otp_entered = (data.get('otp') or '').strip()
+
+    expected_otp = session.get('fp_otp')
+    user_id = session.get('fp_otp_user_id')
+    expires = session.get('fp_otp_expires')
+
+    if not expected_otp or not user_id or not expires:
+        return jsonify({'success': False, 'message': 'No pending verification. Please start over.'})
+
+    if time.time() > expires:
+        session.pop('fp_otp', None)
+        return jsonify({'success': False, 'message': 'This code has expired. Please request a new one.'})
+
+    attempts = session.get('fp_otp_attempts', 0) + 1
+    session['fp_otp_attempts'] = attempts
+    if attempts > 5:
+        session.pop('fp_otp', None)
+        return jsonify({'success': False, 'message': 'Too many incorrect attempts. Please start over.'})
+
+    if not otp_entered or otp_entered != expected_otp:
+        return jsonify({'success': False, 'message': 'Incorrect code. Please check your email and try again.'})
+
+    # Code confirmed — issue the reset token and clear OTP state
     token = secrets.token_hex(16)
     session['fp_token'] = token
-    session['fp_user_id'] = user.id
+    session['fp_user_id'] = user_id
+    session.pop('fp_otp', None)
+    session.pop('fp_otp_user_id', None)
+    session.pop('fp_otp_expires', None)
+    session.pop('fp_otp_attempts', None)
     return jsonify({'success': True, 'token': token})
 
 
@@ -395,8 +484,8 @@ def forgot_password_reset():
     from flask import jsonify
     data = request.get_json(silent=True) or {}
     token = (data.get('token') or '').strip()
-    new_password = data.get('password') or ''
-    confirm = data.get('confirm') or ''
+    new_password = (data.get('password') or '').strip()
+    confirm = (data.get('confirm') or '').strip()
 
     if not token or token != session.get('fp_token'):
         return jsonify({'success': False, 'message': 'Session expired. Please start over.'})
