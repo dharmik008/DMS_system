@@ -22,7 +22,7 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>#</th><th>Customer</th><th>Vehicle</th><th>Final Price</th><th>Payment</th><th>GST</th><th>Total</th><th>Status</th><th>Actions</th></tr>
+        <tr><th>#</th><th>Customer</th><th>Vehicle</th><th>Final Price</th><th>Payment</th><th>GST</th><th>Total</th><th>Total Cost</th><th>Gross Profit</th><th>Net Profit</th><th>Status</th><th>Actions</th></tr>
       </thead>
       <tbody>
         {% for deal in deals %}
@@ -38,10 +38,13 @@
             <div style="font-size:11px;color:var(--text-secondary)">{{ deal.vehicle.year }}</div>
             {% endif %}
           </td>
-          <td style="font-weight:700;color:var(--navy)">₹{{ "{:,.0f}".format(deal['final_price']) }}</td>
+          <td style="font-weight:700;color:#2563eb">₹{{ "{:,.0f}".format(deal['final_price']) }}</td>
           <td><span class="badge badge-navy">{{ deal['payment_mode'].title() }}</span></td>
           <td style="color:var(--text-secondary)">₹{{ "{:,.0f}".format(deal['gst_amount']) }}</td>
           <td style="font-weight:700;color:var(--success)">₹{{ "{:,.0f}".format(deal['total_amount'] or deal['final_price']) }}</td>
+          <td style="color:#dc2626;font-weight:600">₹{{ "{:,.0f}".format(deal['total_cost']) }}</td>
+          <td style="color:{% if deal['gross_profit'] < 0 %}#dc2626{% else %}#16a34a{% endif %};font-weight:700">₹{{ "{:,.0f}".format(deal['gross_profit']) }}</td>
+          <td style="color:{% if deal['net_profit'] < 0 %}#dc2626{% else %}#16a34a{% endif %};font-weight:800">₹{{ "{:,.0f}".format(deal['net_profit']) }}</td>
           <td>
             <span class="badge {% if deal['status'] == 'delivered' %}badge-success{% elif deal['status'] == 'cancelled' %}badge-danger{% elif deal['status'] == 'booked' %}badge-info{% else %}badge-warning{% endif %}">
               {{ deal['status'] }}
@@ -55,7 +58,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="9"><div class="empty-state"><i class="fas fa-handshake"></i><h3>No deals found</h3><a href="{{ url_for('dealer.add_deal') }}" class="btn btn-primary mt-16">Create First Deal</a></div></td></tr>
+        <tr><td colspan="12"><div class="empty-state"><i class="fas fa-handshake"></i><h3>No deals found</h3><a href="{{ url_for('dealer.add_deal') }}" class="btn btn-primary mt-16">Create First Deal</a></div></td></tr>
         {% endfor %}
       </tbody>
     </table>
