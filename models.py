@@ -197,8 +197,12 @@ class Vehicle(db.Model):
     insurance_valid_till = db.Column(db.Date)
     rc_available = db.Column(db.Boolean, default=True)
     featured = db.Column(db.Boolean, default=False)
-    # approved/pending/rejected
-    approval_status = db.Column(db.String(20), default='Pending')
+    # approved/pending/rejected — lowercase, must match admin/routes.py and
+    # db.py's public-listing filters exactly (Vehicle.approval_status ==
+    # 'approved' etc. are case-sensitive string comparisons). A capitalised
+    # default here previously meant new dealer-added vehicles never showed
+    # up in the admin's Pending queue at all, breaking the approval flow.
+    approval_status = db.Column(db.String(20), default='pending')
     created_at = db.Column(db.DateTime, default=_now_ist)
     updated_at = db.Column(
         db.DateTime, default=_now_ist, onupdate=_now_ist)
@@ -243,6 +247,9 @@ class Vehicle(db.Model):
             'registration_number': self.registration_number,
             'rc_available': self.rc_available, 'featured': self.featured,
             'created_at': self.created_at, 'insurance_till': self.insurance_valid_till,
+            # Admin-controlled approval state — read-only from the dealer
+            # side (see db.py vehicle_update(), which hard-blocks this key).
+            'approval_status': self.approval_status or 'pending',
             # new condition detail fields
             'accident_history':   self.accident_history   or 'NA',
             'loan_status':        self.loan_status        or 'NA',
@@ -322,6 +329,59 @@ class Lead(db.Model):
         return f'<Lead {self.customer_name} - {self.stage}>'
 
 
+#: Deal statuses that count as "closed / revenue-realised" everywhere in the
+#: system (Dashboard, Finance, Reports). Kept in one place so every module
+#: uses the exact same definition of "Completed / Delivered".
+DEAL_REVENUE_STATUSES = ('finalized', 'delivered')
+
+
+def compute_deal_financials(purchase_price=0, transportation_cost=0, repair_cost=0,
+                             registration_cost=0, marketing_cost=0,
+                             selling_price=0, other_expenses=0):
+    """
+    Single source of truth for the Deal financial formulas.
+    Used by models.py (Deal.recompute_financials), db.py and dealer/routes.py
+    so Dashboard, Deals & Sales, Finance and Reports can never drift apart.
+
+        Total Cost    = Purchase + Transportation + Repair + Registration + Marketing
+        Gross Revenue = Selling Price
+        Gross Profit  = Selling Price - Total Cost
+        Net Profit    = Gross Profit - Other Selling Expenses
+    """
+    def _f(v):
+        try:
+            return float(v) if v not in (None, '') else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    purchase_price      = _f(purchase_price)
+    transportation_cost = _f(transportation_cost)
+    repair_cost          = _f(repair_cost)
+    registration_cost    = _f(registration_cost)
+    marketing_cost        = _f(marketing_cost)
+    selling_price          = _f(selling_price)
+    other_expenses          = _f(other_expenses)
+
+    total_cost    = (purchase_price + transportation_cost + repair_cost +
+                      registration_cost + marketing_cost)
+    gross_revenue = selling_price
+    gross_profit  = selling_price - total_cost
+    net_profit    = gross_profit - other_expenses
+
+    return {
+        'purchase_price':      purchase_price,
+        'transportation_cost': transportation_cost,
+        'repair_cost':         repair_cost,
+        'registration_cost':   registration_cost,
+        'marketing_cost':      marketing_cost,
+        'total_cost':          total_cost,
+        'gross_revenue':       gross_revenue,
+        'gross_profit':        gross_profit,
+        'other_expenses':      other_expenses,
+        'net_profit':          net_profit,
+    }
+
+
 class Deal(db.Model):
     __tablename__ = 'deals'
     id = db.Column(db.Integer, primary_key=True)
@@ -352,6 +412,42 @@ class Deal(db.Model):
     delivery_date = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=_now_ist)
 
+    # ── Financial Summary (Revenue & Profit Management System) ────────────────
+    # NOTE: "Selling Price" / "Gross Revenue" in the spec are intentionally NOT
+    # duplicated as new columns — this Deal already has `final_price`, which
+    # *is* the selling price used everywhere else (invoice, GST, totals). Adding
+    # a second "selling_price" column would create two competing numbers and
+    # break the single-source-of-truth requirement, so final_price is reused
+    # as Selling Price / Gross Revenue throughout.
+    purchase_price       = db.Column(db.Float, default=0)
+    transportation_cost  = db.Column(db.Float, default=0)
+    repair_cost          = db.Column(db.Float, default=0)
+    registration_cost    = db.Column(db.Float, default=0)
+    marketing_cost       = db.Column(db.Float, default=0)
+    total_cost           = db.Column(db.Float, default=0)   # auto-calculated
+    other_expenses       = db.Column(db.Float, default=0)
+    gross_profit          = db.Column(db.Float, default=0)   # auto-calculated
+    net_profit             = db.Column(db.Float, default=0)   # auto-calculated
+
+    def recompute_financials(self):
+        """Recalculate total_cost / gross_profit / net_profit from the cost
+        fields + final_price (selling price). Call this any time a financial
+        field changes, right before commit — this IS the single source of
+        truth for every module (Dashboard, Deals, Finance, Reports)."""
+        result = compute_deal_financials(
+            purchase_price=self.purchase_price,
+            transportation_cost=self.transportation_cost,
+            repair_cost=self.repair_cost,
+            registration_cost=self.registration_cost,
+            marketing_cost=self.marketing_cost,
+            selling_price=self.final_price,
+            other_expenses=self.other_expenses,
+        )
+        self.total_cost   = result['total_cost']
+        self.gross_profit = result['gross_profit']
+        self.net_profit   = result['net_profit']
+        return result
+
     # FIX: Deal.vehicle now uses back_populates='deals' matching Vehicle.deals.
     # Old code: Vehicle had backref='vehicle_ref' AND Deal had a separate
     # relationship() — both pointed at the same FK causing SQLAlchemy to
@@ -374,7 +470,19 @@ class Deal(db.Model):
             'emi_amount': self.emi_amount, 'bank_name': self.bank_name,
             'status': self.status, 'booking_amount': self.booking_amount,
             'gst_amount': self.gst_amount, 'total_amount': self.total_amount,
-            'notes': self.notes, 'created_at': self.created_at
+            'notes': self.notes, 'created_at': self.created_at,
+            # ── Financial Summary ────────────────────────────────────────────
+            'purchase_price':      self.purchase_price or 0,
+            'transportation_cost': self.transportation_cost or 0,
+            'repair_cost':         self.repair_cost or 0,
+            'registration_cost':   self.registration_cost or 0,
+            'marketing_cost':      self.marketing_cost or 0,
+            'total_cost':          self.total_cost or 0,
+            'selling_price':       self.final_price or 0,   # alias — see note above
+            'gross_revenue':       self.final_price or 0,   # alias = Selling Price
+            'gross_profit':        self.gross_profit or 0,
+            'other_expenses':      self.other_expenses or 0,
+            'net_profit':          self.net_profit or 0,
         }
 
     def __repr__(self):
@@ -397,6 +505,26 @@ class Document(db.Model):
 
     def __repr__(self):
         return f'<Document {self.doc_type}>'
+
+
+class WhatsAppMessageLog(db.Model):
+    """Audit trail for outgoing WhatsApp messages (customer inquiry
+    confirmations). Every send attempt is logged here — sent, failed, or
+    skipped (e.g. WhatsApp not configured yet) — so dealers/admins can see
+    exactly what happened without digging through server logs."""
+    __tablename__ = 'whatsapp_message_log'
+    id = db.Column(db.Integer, primary_key=True)
+    inquiry_id = db.Column(db.Integer, db.ForeignKey('inquiries.id'), nullable=True)
+    to_number = db.Column(db.String(20), nullable=False)
+    message_type = db.Column(db.String(30), default='template')   # template | text
+    template_name = db.Column(db.String(100))
+    status = db.Column(db.String(20), default='pending')          # sent | failed | skipped
+    error = db.Column(db.Text)
+    provider_message_id = db.Column(db.String(100))
+    created_at = db.Column(db.DateTime, default=_now_ist)
+
+    def __repr__(self):
+        return f'<WhatsAppMessageLog {self.to_number} {self.status}>'
 
 
 class Inquiry(db.Model):
@@ -559,19 +687,25 @@ def seed_demo_data():
     db.session.add(user)
     db.session.commit()
 
+    # NOTE: approval_status='approved' is set explicitly here ONLY because
+    # this is one-time demo/showcase data seeded on a fresh install (so the
+    # storefront isn't empty out of the box) — it is NOT how real dealer
+    # listings work. Every vehicle a real dealer adds via the Add Vehicle
+    # form always starts 'pending' (see db.py vehicle_create()) and must be
+    # approved by an admin before it appears on the marketplace.
     cars = [
         Vehicle(dealer_id=dealer.id, make='Maruti',   model='Swift',         variant='ZXi AMT', year=2022, color='Red',    fuel_type='Petrol',  transmission='Automatic', mileage=18000,
-                engine_cc=1197, price=680000,  condition='used', status='available', description='Well maintained, single owner.',              image_filename='None', featured=True),
+                engine_cc=1197, price=680000,  condition='used', status='available', approval_status='approved', description='Well maintained, single owner.',              image_filename='None', featured=True),
         Vehicle(dealer_id=dealer.id, make='Hyundai',  model='Creta',         variant='SX(O)',   year=2023, color='White',  fuel_type='Diesel',  transmission='Automatic', mileage=12000,
-                engine_cc=1493, price=1650000, condition='used', status='available', description='Premium SUV, sunroof, leather seats.',        image_filename='None', featured=True),
+                engine_cc=1493, price=1650000, condition='used', status='available', approval_status='approved', description='Premium SUV, sunroof, leather seats.',        image_filename='None', featured=True),
         Vehicle(dealer_id=dealer.id, make='Tata',     model='Nexon',         variant='XZ+ DT',  year=2023, color='Blue',   fuel_type='Electric', transmission='Automatic', mileage=8000,
-                engine_cc=0,    price=1450000, condition='used', status='available', description='Electric SUV, 5-star safety rating.',         image_filename='None', featured=True),
+                engine_cc=0,    price=1450000, condition='used', status='available', approval_status='approved', description='Electric SUV, 5-star safety rating.',         image_filename='None', featured=True),
         Vehicle(dealer_id=dealer.id, make='Honda',    model='City',          variant='ZX CVT',  year=2021, color='Silver', fuel_type='Petrol',  transmission='Automatic', mileage=32000,
-                engine_cc=1498, price=1020000, condition='used', status='available', description='Sedan in pristine condition.',                image_filename='None', featured=False),
+                engine_cc=1498, price=1020000, condition='used', status='available', approval_status='approved', description='Sedan in pristine condition.',                image_filename='None', featured=False),
         Vehicle(dealer_id=dealer.id, make='Mahindra', model='Scorpio-N',     variant='Z8 L',    year=2023, color='Black',  fuel_type='Diesel',  transmission='Manual',    mileage=9500,
-                engine_cc=2184, price=2050000, condition='used', status='available', description='7-seater SUV, diesel, well maintained.',     image_filename='None', featured=True),
+                engine_cc=2184, price=2050000, condition='used', status='available', approval_status='approved', description='7-seater SUV, diesel, well maintained.',     image_filename='None', featured=True),
         Vehicle(dealer_id=dealer.id, make='Toyota',   model='Innova Crysta', variant='GX MT',   year=2020, color='White',  fuel_type='Diesel',  transmission='Manual',    mileage=65000,
-                engine_cc=2393, price=1580000, condition='used', status='available', description='Family MPV, all service records available.', image_filename='None', featured=False),
+                engine_cc=2393, price=1580000, condition='used', status='available', approval_status='approved', description='Family MPV, all service records available.', image_filename='None', featured=False),
     ]
     db.session.add_all(cars)
     db.session.commit()
@@ -643,6 +777,22 @@ class DealerKYC(db.Model):
     reviewed_at = db.Column(db.DateTime, nullable=True)
     reviewed_by = db.Column(db.String(100), nullable=True)
 
+    # ── Auto-verification pipeline results (OCR + image-quality engine) ──
+    # Fields extracted/detected automatically at upload time, before a
+    # document ever reaches an admin. Populated by utils/kyc_engine.
+    aadhaar_front_number = db.Column(db.String(20), nullable=True)
+    aadhaar_back_number = db.Column(db.String(20), nullable=True)
+    pan_number = db.Column(db.String(20), nullable=True)
+    aadhaar_front_name = db.Column(db.String(150), nullable=True)
+    aadhaar_back_name = db.Column(db.String(150), nullable=True)
+    pan_name = db.Column(db.String(150), nullable=True)
+    aadhaar_front_dob = db.Column(db.String(20), nullable=True)
+    pan_dob = db.Column(db.String(20), nullable=True)
+    # Human-readable warnings from cross-document checks (front/back number
+    # mismatch, PAN vs Aadhaar name mismatch, DOB mismatch) — informational
+    # only, surfaced to the admin reviewer, never auto-blocks a document.
+    cross_validation_notes = db.Column(db.Text, nullable=True)
+
     dealer = db.relationship(
         'User', backref=db.backref('kyc_record', uselist=False,
                                    cascade='all, delete-orphan',
@@ -665,6 +815,26 @@ class DealerKYC(db.Model):
 
     def __repr__(self):
         return f'<DealerKYC dealer_id={self.dealer_id} status={self.kyc_status}>'
+
+
+class KYCDuplicateHash(db.Model):
+    """SHA256 + perceptual-hash registry used by utils/kyc_engine to catch
+    the same KYC document (even re-saved/re-compressed) being uploaded
+    more than once, across ANY dealer — not just the current one."""
+    __tablename__ = 'kyc_duplicate_hash'
+    id = db.Column(db.Integer, primary_key=True)
+    dealer_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    doc_type = db.Column(db.String(20), nullable=False)   # aadhaar_front | aadhaar_back | pan_card
+    sha256_hash = db.Column(db.String(64), nullable=False, index=True)
+    phash = db.Column(db.String(64), nullable=False)
+    created_at = db.Column(db.DateTime, default=_now_ist)
+
+    __table_args__ = (
+        db.UniqueConstraint('dealer_id', 'doc_type', name='uq_kyc_duplicate_dealer_doctype'),
+    )
+
+    def __repr__(self):
+        return f'<KYCDuplicateHash dealer_id={self.dealer_id} doc_type={self.doc_type}>'
 
 
 class DealerNotification(db.Model):
