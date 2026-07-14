@@ -1,22 +1,3 @@
-"""
-owner/routes.py — CarYanams DMS  ██████╗ ██╗    ██╗███╗   ██╗███████╗██████╗
-                                  ██╔═══██╗██║    ██║████╗  ██║██╔════╝██╔══██╗
-OWNER / SUPREME DASHBOARD v26     ██║   ██║██║ █╗ ██║██╔██╗ ██║█████╗  ██████╔╝
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ██║   ██║██║███╗██║██║╚██╗██║██╔══╝  ██╔══██╗
-CRITICAL SECRECY RULES:           ╚██████╔╝╚███╔███╔╝██║ ╚████║███████╗██║  ██║
- • Entry in DB = hashed token      ╚═════╝  ╚══╝╚══╝ ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝
-   — never role='owner' or
-     any plain-text identifier
- • URL prefix /xo (not /owner, /master, /supreme)
- • Zero log entries in admin_logs / visitor_logs / activity
- • All other roles (super-admin, sub-admin, dealer, user) are
-   COMPLETELY UNAWARE this layer exists
-
-UPGRADE v26 — Full CRUD for Users, Dealers, Sub Admins
- + Password reset / Force-change / Lock / Unlock
- + Audit logging to xo_event_audit only
-"""
-
 import hashlib, os, json, secrets, string
 from functools import wraps
 from datetime import datetime, timedelta, timezone as _tz
