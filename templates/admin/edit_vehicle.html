@@ -12,6 +12,7 @@
   <div class="card-header"><span class="card-title">Vehicle Details</span></div>
   <div style="padding:24px;">
     <form method="POST" id="editVehicleForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
         <div class="form-group">
           <label>Make / Brand *</label>
@@ -57,14 +58,6 @@
             value="{{ vehicle.registration_number or '' }}">
           <small style="color:#6b7280;font-size:11px;">Auto-formatted: GJ 06 AB 1234</small>
           <small id="adminEditRegNumberError" style="display:none;font-size:11px;color:#dc2626;font-weight:600;">Please enter a valid vehicle number in the format: GJ 01 AB 1234 or GJ 01 ABC 1234</small>
-        </div>
-        <div class="form-group">
-          <label>Approval Status</label>
-          <select name="approval_status" class="form-control">
-            <option value="pending"  {% if vehicle.approval_status == 'pending'  %}selected{% endif %}>⏳ Pending</option>
-            <option value="approved" {% if vehicle.approval_status == 'approved' %}selected{% endif %}>✅ Approved</option>
-            <option value="rejected" {% if vehicle.approval_status == 'rejected' %}selected{% endif %}>❌ Rejected</option>
-          </select>
         </div>
       </div>
       <div class="form-group" style="margin-top:16px;">
@@ -121,7 +114,7 @@
         <div class="form-group" style="grid-column:1/-1;">
           <label>Major Issues</label>
           {% set saved_issues = (vehicle.major_issues or 'None').split(',') %}
-          <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;">
+          <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;" id="editMajorIssues">
             {% for opt in ['Engine','Gearbox','AC','Suspension','None','NA'] %}
             <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
               <input type="checkbox" name="major_issues" value="{{ opt }}" style="width:16px;height:16px;"
@@ -222,5 +215,33 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 });
+
+/* ── Major Issues: "None"/"NA" are mutually exclusive with real issues ───
+   - Checking "NA" or "None"  → uncheck every other option.
+   - Checking a real issue (Engine/Gearbox/AC/Suspension) → uncheck NA/None.
+   Also normalises any stale saved combination on page load.
+──────────────────────────────────────────────────────────────────────── */
+(function () {
+  var wrap = document.getElementById('editMajorIssues');
+  if (!wrap) return;
+  var EXCLUSIVE = ['None', 'NA'];
+  var boxes = Array.prototype.slice.call(wrap.querySelectorAll('input[name="major_issues"]'));
+
+  boxes.forEach(function (box) {
+    box.addEventListener('change', function () {
+      if (!box.checked) return;
+      if (EXCLUSIVE.indexOf(box.value) !== -1) {
+        boxes.forEach(function (b) { if (b !== box) b.checked = false; });
+      } else {
+        boxes.forEach(function (b) { if (EXCLUSIVE.indexOf(b.value) !== -1) b.checked = false; });
+      }
+    });
+  });
+
+  var checkedExclusive = boxes.find(function (b) { return b.checked && EXCLUSIVE.indexOf(b.value) !== -1; });
+  if (checkedExclusive) {
+    boxes.forEach(function (b) { if (b !== checkedExclusive) b.checked = false; });
+  }
+})();
 </script>
 {% endblock %}
