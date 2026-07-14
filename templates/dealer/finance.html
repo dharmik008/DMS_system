@@ -36,6 +36,52 @@
   </div>
 </div>
 
+<!-- Financial Summary KPIs (single source of truth, synced with Deals & Sales) -->
+<div class="stats-grid mb-24">
+  <div class="stat-card">
+    <div class="stat-icon"><i class="fas fa-tags"></i></div>
+    <div class="stat-info">
+      <div class="stat-value" style="font-size:16px;color:#2563eb">₹{{ "{:,.0f}".format(total_sales) }}</div>
+      <div class="stat-label">Total Sales</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon"><i class="fas fa-shopping-cart"></i></div>
+    <div class="stat-info">
+      <div class="stat-value" style="font-size:16px;color:#dc2626">₹{{ "{:,.0f}".format(total_purchase_cost) }}</div>
+      <div class="stat-label">Total Purchase Cost</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon"><i class="fas fa-receipt"></i></div>
+    <div class="stat-info">
+      <div class="stat-value" style="font-size:16px;color:#dc2626">₹{{ "{:,.0f}".format(total_cost) }}</div>
+      <div class="stat-label">Total Cost</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon"><i class="fas fa-chart-line"></i></div>
+    <div class="stat-info">
+      <div class="stat-value" style="font-size:16px;color:{% if gross_profit < 0 %}#dc2626{% else %}#16a34a{% endif %}">₹{{ "{:,.0f}".format(gross_profit) }}</div>
+      <div class="stat-label">Gross Profit</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon"><i class="fas fa-wallet"></i></div>
+    <div class="stat-info">
+      <div class="stat-value" style="font-size:16px;color:{% if net_revenue < 0 %}#dc2626{% else %}#16a34a{% endif %}">₹{{ "{:,.0f}".format(net_revenue) }}</div>
+      <div class="stat-label">Net Revenue</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon"><i class="fas fa-car"></i></div>
+    <div class="stat-info">
+      <div class="stat-value">{{ total_vehicles_sold }}</div>
+      <div class="stat-label">Total Vehicles Sold</div>
+    </div>
+  </div>
+</div>
+
 <div class="grid-2 mb-24">
   <!-- ══════════════════════════════════════════════ -->
   <!-- EMI CALCULATOR WITH SLIDERS                   -->
@@ -208,7 +254,7 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Deal #</th><th>Customer</th><th>Vehicle</th><th>Final Price</th><th>GST</th><th>Total</th><th>Mode</th><th>Status</th><th>Invoice</th></tr>
+        <tr><th>Deal #</th><th>Customer</th><th>Vehicle</th><th>Final Price</th><th>GST</th><th>Total</th><th>Total Cost</th><th>Net Profit</th><th>Mode</th><th>Status</th><th>Invoice</th></tr>
       </thead>
       <tbody>
         {% for deal in recent_deals %}
@@ -219,6 +265,8 @@
           <td>₹{{ "{:,.0f}".format(deal['final_price']) }}</td>
           <td style="color:var(--text-secondary)">₹{{ "{:,.0f}".format(deal['gst_amount']) }}</td>
           <td style="font-weight:700;color:var(--success)">₹{{ "{:,.0f}".format(deal['total_amount'] or deal['final_price']) }}</td>
+          <td style="color:#dc2626">₹{{ "{:,.0f}".format(deal['total_cost']) }}</td>
+          <td style="font-weight:700;color:{% if deal['net_profit'] < 0 %}#dc2626{% else %}#16a34a{% endif %}">₹{{ "{:,.0f}".format(deal['net_profit']) }}</td>
           <td><span class="badge badge-navy">{{ deal['payment_mode'].title() }}</span></td>
           <td>
             <span class="badge {% if deal['status'] == 'delivered' %}badge-success{% elif deal['status'] == 'cancelled' %}badge-danger{% else %}badge-warning{% endif %}">
@@ -228,7 +276,7 @@
           <td><a href="{{ url_for('dealer.invoice', did_=deal['id']) }}" class="btn btn-sm btn-outline" target="_blank"><i class="fas fa-file-invoice"></i></a></td>
         </tr>
         {% else %}
-        <tr><td colspan="9" class="text-center text-muted" style="padding:20px">No transactions yet</td></tr>
+        <tr><td colspan="11" class="text-center text-muted" style="padding:20px">No transactions yet</td></tr>
         {% endfor %}
       </tbody>
     </table>
