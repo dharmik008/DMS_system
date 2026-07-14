@@ -11,8 +11,6 @@
   <div style="display:flex;gap:8px;">
     <a href="{{ url_for('admin.all_vehicles') }}" class="btn btn-outline btn-sm"><i class="fas fa-arrow-left"></i> Back</a>
     <a href="{{ url_for('admin.edit_vehicle', vehicle_id=vehicle.id) }}" class="btn btn-outline btn-sm"><i class="fas fa-pencil-alt"></i> Edit</a>
-    <button onclick="approveVehicle({{ vehicle.id }})" class="btn btn-success btn-sm" {% if vehicle.approval_status == 'approved' %}disabled{% endif %}><i class="fas fa-check-circle"></i> Approve</button>
-    <button onclick="rejectVehicle({{ vehicle.id }})" class="btn btn-danger btn-sm" {% if vehicle.approval_status == 'rejected' %}disabled{% endif %}><i class="fas fa-times-circle"></i> Reject</button>
   </div>
 </div>
 
@@ -192,16 +190,6 @@ function openLightbox(src, label) {
   }
   lb.appendChild(close);
   document.body.appendChild(lb);
-}
-function approveVehicle(id) {
-  if (!confirm('Approve this vehicle?')) return;
-  fetch('/admin/api/vehicles/' + id + '/approve', {method:'POST'})
-    .then(r=>r.json()).then(d=>{ if(d.success) location.reload(); });
-}
-function rejectVehicle(id) {
-  if (!confirm('Reject this vehicle?')) return;
-  fetch('/admin/api/vehicles/' + id + '/reject', {method:'POST'})
-    .then(r=>r.json()).then(d=>{ if(d.success) location.reload(); });
 }
 </script>
 {% endblock %}
