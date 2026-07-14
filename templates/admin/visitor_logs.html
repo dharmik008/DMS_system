@@ -31,9 +31,12 @@
 </div>
 
 <!-- Filters -->
-<form method="GET" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
-  <input type="text" name="search" value="{{ search }}" placeholder="Search name, IP, browser, page…"
-    style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-1);font-size:13px;flex:1;min-width:160px;">
+<form method="GET" id="filterForm" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
+  <span style="position:relative;display:inline-block;flex:1;min-width:160px;">
+    <input type="text" name="search" id="visitorSearchInput" value="{{ search }}" placeholder="Search name, IP, browser, page…"
+      style="padding:8px 32px 8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-1);font-size:13px;width:100%;">
+    <button type="button" id="visitorSearchMic" class="voice-search-btn" title="Search by voice"><i class="fas fa-microphone"></i></button>
+  </span>
   <input type="date" name="date" value="{{ date_f }}"
     style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-1);font-size:13px;">
   <select name="device"
@@ -297,5 +300,9 @@
 
   setInterval(poll, 30000);
 })();
+</script>
+<script src="{{ url_for('static', filename='js/voice-search.js') }}"></script>
+<script>
+  attachVoiceSearch('visitorSearchInput', 'visitorSearchMic', { autoSubmitForm: 'filterForm' });
 </script>
 {% endblock %}
