@@ -1644,3 +1644,37 @@ button[style*="inline-flex"][style*="border-radius:8px"]:disabled {
 
 /* Push page content up so last row isn't hidden by the bar */
 body.hscroll-active { padding-bottom: 20px; }
+
+/* ========== Voice Search Mic Button (admin panel) ========== */
+.voice-search-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s, color .15s;
+}
+.voice-search-btn:hover {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+.voice-search-btn.voice-listening {
+  background: var(--accent);
+  color: #fff;
+  animation: voicePulseAdmin 1.2s infinite;
+}
+@keyframes voicePulseAdmin {
+  0%   { box-shadow: 0 0 0 0 var(--accent-glow); }
+  70%  { box-shadow: 0 0 0 8px rgba(99,102,241,0); }
+  100% { box-shadow: 0 0 0 0 rgba(99,102,241,0); }
+}
