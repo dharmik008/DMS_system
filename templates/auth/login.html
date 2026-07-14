@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<script src="{{ url_for('static', filename='js/csrf.js') }}"></script>
 <title>Login — Caryanams</title>
 <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -190,6 +192,7 @@
       <!-- Dealer/User login form -->
       <div id="normalLoginForm">
         <form method="POST" action="{{ url_for('auth.login') }}" id="mainLoginForm" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="selected_role" id="selectedRoleInput" value="dealer">
           <input type="hidden" name="return_url" value="{{ request.args.get('returnUrl', '') }}">
           <div class="form-group">
@@ -394,6 +397,14 @@ document.getElementById('policyAgreeCheck').addEventListener('change', function(
 .fp-passrow input { padding-right:42px; }
 .fp-eye { position:absolute; right:12px; top:50%; transform:translateY(-50%);
   background:none; border:none; cursor:pointer; color:#64748b; font-size:15px; }
+.fp-method-tabs { display:flex; gap:8px; margin-bottom:20px; }
+.fp-method-tab {
+  flex:1; padding:11px; border:1.5px solid #e2e8f0; background:#f8fafc; color:#64748b;
+  border-radius:9px; font-size:13px; font-weight:600; cursor:pointer; font-family:'Inter',sans-serif;
+  transition:all .15s; display:flex; align-items:center; justify-content:center; gap:6px;
+}
+.fp-method-tab:hover { border-color:#94a3b8; }
+.fp-method-tab.fp-method-active { background:#002366; border-color:#002366; color:#fff; }
 </style>
 
 <div id="fpOverlay" onclick="if(event.target===this)closeForgotModal()">
@@ -403,21 +414,52 @@ document.getElementById('policyAgreeCheck').addEventListener('change', function(
     <!-- ── Step 1: Verify email + phone ── -->
     <div class="fp-step fp-active" id="fpStep1">
       <h2><i class="fas fa-key" style="color:#002366;font-size:17px;margin-right:8px"></i>Forgot Password</h2>
-      <p class="fp-sub">Enter the email address and mobile number you registered with. Both must match.</p>
+      <p class="fp-sub">Choose how you'd like to receive your verification code.</p>
       <div class="fp-msg" id="fpMsg1"></div>
-      <div class="fp-field">
+
+      <div class="fp-method-tabs">
+        <button type="button" class="fp-method-tab fp-method-active" id="fpTabEmail" onclick="fpSwitchMethod('email')">
+          <i class="fas fa-envelope"></i> Email
+        </button>
+        <button type="button" class="fp-method-tab" id="fpTabPhone" onclick="fpSwitchMethod('phone')">
+          <i class="fas fa-mobile-alt"></i> Phone
+        </button>
+      </div>
+
+      <div class="fp-field" id="fpEmailField">
         <label><i class="fas fa-envelope" style="margin-right:5px"></i>Registered Email</label>
         <input type="email" id="fpEmail" placeholder="you@example.com" oninput="fpClearErr('fpEmail','fpEmailErr')">
         <div class="fp-err" id="fpEmailErr"></div>
       </div>
-      <div class="fp-field">
+      <div class="fp-field" id="fpPhoneField" style="display:none">
         <label><i class="fas fa-mobile-alt" style="margin-right:5px"></i>Registered Phone / Mobile Number</label>
         <input type="tel" id="fpPhone" placeholder="10-digit phone / mobile number" maxlength="10" oninput="fpClearErr('fpPhone','fpPhoneErr')">
         <div class="fp-err" id="fpPhoneErr"></div>
       </div>
       <button class="fp-btn" id="fpVerifyBtn" onclick="fpVerify()">
-        <i class="fas fa-check-circle" style="margin-right:7px"></i>Verify My Identity
+        <i class="fas fa-check-circle" style="margin-right:7px"></i>Send Verification Code
       </button>
+    </div>
+
+    <!-- ── Step 1b: Enter emailed OTP ── -->
+    <div class="fp-step" id="fpStepOtp">
+      <button class="fp-back" onclick="fpGoStep1()"><i class="fas fa-arrow-left" style="margin-right:5px"></i>Back</button>
+      <h2><i class="fas fa-envelope-open-text" style="color:#002366;font-size:17px;margin-right:8px"></i>Enter Verification Code</h2>
+      <p class="fp-sub" id="fpOtpSub">We emailed a 6-digit code to your registered email address. It is valid for 10 minutes.</p>
+      <div class="fp-msg" id="fpMsgOtp"></div>
+      <div class="fp-field">
+        <label><i class="fas fa-shield-alt" style="margin-right:5px"></i>6-Digit Code</label>
+        <input type="text" id="fpOtp" inputmode="numeric" maxlength="6" placeholder="123456"
+               style="letter-spacing:6px;font-weight:700;text-align:center"
+               oninput="fpClearErr('fpOtp','fpOtpErr')">
+        <div class="fp-err" id="fpOtpErr"></div>
+      </div>
+      <button class="fp-btn" id="fpOtpBtn" onclick="fpVerifyOtp()">
+        <i class="fas fa-check-circle" style="margin-right:7px"></i>Verify Code
+      </button>
+      <div style="text-align:center;margin-top:14px">
+        <a href="#" id="fpResendLink" onclick="fpVerify(true);return false;" style="font-size:13px;color:#002366;font-weight:600;text-decoration:none">Resend code</a>
+      </div>
     </div>
 
     <!-- ── Step 2: Set new password ── -->
@@ -453,6 +495,7 @@ document.getElementById('policyAgreeCheck').addEventListener('change', function(
 <script>
 /* ── Forgot-password modal state ── */
 var _fpToken = null;
+var _fpMethod = 'email'; // 'email' or 'phone' — only ONE is used at a time
 
 function openForgotModal() {
   fpGoStep1();
@@ -462,18 +505,35 @@ function openForgotModal() {
 function closeForgotModal() {
   document.getElementById('fpOverlay').classList.remove('fp-open');
 }
+function fpSwitchMethod(method) {
+  _fpMethod = method;
+  var isEmail = method === 'email';
+  document.getElementById('fpTabEmail').classList.toggle('fp-method-active', isEmail);
+  document.getElementById('fpTabPhone').classList.toggle('fp-method-active', !isEmail);
+  document.getElementById('fpEmailField').style.display = isEmail ? 'block' : 'none';
+  document.getElementById('fpPhoneField').style.display = isEmail ? 'none' : 'block';
+  // Clear both fields/errors so leftover values from the other method never get sent
+  fpClearErr('fpEmail','fpEmailErr'); document.getElementById('fpEmail').value = '';
+  fpClearErr('fpPhone','fpPhoneErr'); document.getElementById('fpPhone').value = '';
+  document.getElementById('fpMsg1').style.display = 'none';
+  setTimeout(function(){
+    document.getElementById(isEmail ? 'fpEmail' : 'fpPhone').focus();
+  }, 50);
+}
 function fpGoStep1() {
   document.getElementById('fpStep1').classList.add('fp-active');
+  document.getElementById('fpStepOtp').classList.remove('fp-active');
   document.getElementById('fpStep2').classList.remove('fp-active');
-  ['fpEmail','fpPhone','fpNewPass','fpConfPass'].forEach(function(id){
+  ['fpEmail','fpPhone','fpOtp','fpNewPass','fpConfPass'].forEach(function(id){
     var el = document.getElementById(id); if(el) el.value = '';
     el && el.classList.remove('fp-invalid','fp-valid');
   });
-  ['fpEmailErr','fpPhoneErr','fpNewPassErr','fpConfPassErr','fpMsg1','fpMsg2'].forEach(function(id){
+  ['fpEmailErr','fpPhoneErr','fpOtpErr','fpNewPassErr','fpConfPassErr','fpMsg1','fpMsgOtp','fpMsg2'].forEach(function(id){
     var el = document.getElementById(id);
     if(el){ el.style.display='none'; el.textContent=''; el.className = el.className.replace(/fp-(success|error)/g,'').trim(); }
   });
   _fpToken = null;
+  fpSwitchMethod('email');
 }
 
 function fpShowMsg(id, type, text) {
@@ -500,42 +560,88 @@ function fpToggle(inputId, btn) {
   btn.querySelector('i').className = inp.type === 'password' ? 'fas fa-eye' : 'fas fa-eye-slash';
 }
 
-function fpVerify() {
-  var email = (document.getElementById('fpEmail').value || '').trim();
-  var phone = (document.getElementById('fpPhone').value || '').trim();
+function fpVerify(isResend) {
+  var payload = { channel: _fpMethod === 'phone' ? 'sms' : 'email' };
   var ok = true;
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    fpFieldErr('fpEmail','fpEmailErr','Please enter a valid email address.'); ok = false;
-  }
-  var digits = phone.replace(/\D/g,'');
-  if (!digits || digits.length !== 10) {
-    fpFieldErr('fpPhone','fpPhoneErr','Please enter a valid 10-digit mobile number.'); ok = false;
+
+  if (_fpMethod === 'email') {
+    var email = (document.getElementById('fpEmail').value || '').trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      fpFieldErr('fpEmail','fpEmailErr','Please enter a valid email address.'); ok = false;
+    }
+    payload.email = email;
+  } else {
+    var phone = (document.getElementById('fpPhone').value || '').trim();
+    var digits = phone.replace(/\D/g,'');
+    if (!digits || digits.length !== 10) {
+      fpFieldErr('fpPhone','fpPhoneErr','Please enter a valid 10-digit mobile number.'); ok = false;
+    }
+    payload.phone = phone;
   }
   if (!ok) return;
 
-  var btn = document.getElementById('fpVerifyBtn');
-  btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin" style="margin-right:7px"></i>Verifying...';
+  var btn = isResend ? document.getElementById('fpResendLink') : document.getElementById('fpVerifyBtn');
+  var originalHtml = btn.innerHTML;
+  if (isResend) { btn.innerHTML = 'Sending...'; }
+  else { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin" style="margin-right:7px"></i>Sending code...'; }
 
   fetch('/auth/api/forgot-password/verify', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ email: email, phone: phone })
+    body: JSON.stringify(payload)
   })
   .then(function(r){ return r.json(); })
   .then(function(data) {
-    btn.disabled = false; btn.innerHTML = '<i class="fas fa-check-circle" style="margin-right:7px"></i>Verify My Identity';
+    if (!isResend) { btn.disabled = false; btn.innerHTML = originalHtml; } else { btn.innerHTML = originalHtml; }
     if (data.success) {
-      _fpToken = data.token;
+      document.getElementById('fpOtpSub').textContent = data.message || 'We emailed a 6-digit code to your registered email address.';
       document.getElementById('fpStep1').classList.remove('fp-active');
-      document.getElementById('fpStep2').classList.add('fp-active');
-      setTimeout(function(){ document.getElementById('fpNewPass').focus(); }, 80);
+      document.getElementById('fpStepOtp').classList.add('fp-active');
+      document.getElementById('fpOtp').value = '';
+      if (isResend) { fpShowMsg('fpMsgOtp', 'success', 'A new code has been sent.'); }
+      setTimeout(function(){ document.getElementById('fpOtp').focus(); }, 80);
     } else {
-      fpShowMsg('fpMsg1', 'error', data.message || 'Verification failed. Please check your details.');
+      if (isResend) { fpShowMsg('fpMsgOtp', 'error', data.message || 'Could not resend code.'); }
+      else { fpShowMsg('fpMsg1', 'error', data.message || 'Verification failed. Please check your details.'); }
     }
   })
   .catch(function() {
-    btn.disabled = false; btn.innerHTML = '<i class="fas fa-check-circle" style="margin-right:7px"></i>Verify My Identity';
-    fpShowMsg('fpMsg1', 'error', 'Network error. Please try again.');
+    if (!isResend) { btn.disabled = false; }
+    btn.innerHTML = originalHtml;
+    var target = isResend ? 'fpMsgOtp' : 'fpMsg1';
+    fpShowMsg(target, 'error', 'Network error. Please try again.');
+  });
+}
+
+function fpVerifyOtp() {
+  var otp = (document.getElementById('fpOtp').value || '').trim();
+  if (!/^\d{6}$/.test(otp)) {
+    fpFieldErr('fpOtp','fpOtpErr','Please enter the 6-digit code.'); return;
+  }
+
+  var btn = document.getElementById('fpOtpBtn');
+  btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin" style="margin-right:7px"></i>Verifying...';
+
+  fetch('/auth/api/forgot-password/verify-otp', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ otp: otp })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(data) {
+    btn.disabled = false; btn.innerHTML = '<i class="fas fa-check-circle" style="margin-right:7px"></i>Verify Code';
+    if (data.success) {
+      _fpToken = data.token;
+      document.getElementById('fpStepOtp').classList.remove('fp-active');
+      document.getElementById('fpStep2').classList.add('fp-active');
+      setTimeout(function(){ document.getElementById('fpNewPass').focus(); }, 80);
+    } else {
+      fpShowMsg('fpMsgOtp', 'error', data.message || 'Incorrect code. Please try again.');
+    }
+  })
+  .catch(function() {
+    btn.disabled = false; btn.innerHTML = '<i class="fas fa-check-circle" style="margin-right:7px"></i>Verify Code';
+    fpShowMsg('fpMsgOtp', 'error', 'Network error. Please try again.');
   });
 }
 
