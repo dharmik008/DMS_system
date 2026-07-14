@@ -32,9 +32,55 @@
   <div class="stat-card">
     <div class="stat-icon"><i class="fas fa-rupee-sign"></i></div>
     <div class="stat-info">
-      <div class="stat-value" style="font-size:18px">₹{{ "{:,.0f}".format(revenue) }}</div>
-      <div class="stat-label">Total Revenue</div>
-      <div class="stat-change up"><i class="fas fa-arrow-up"></i> From delivered deals</div>
+      <div class="stat-value" style="font-size:18px;color:{% if net_revenue < 0 %}var(--danger){% else %}var(--success){% endif %}">₹{{ "{:,.0f}".format(net_revenue) }}</div>
+      <div class="stat-label">Net Revenue</div>
+      <div class="stat-change up"><i class="fas fa-arrow-up"></i> Net Profit from Completed/Delivered deals</div>
+    </div>
+  </div>
+</div>
+
+<!-- Financial KPI Row (Revenue & Profit Management) -->
+<div class="stats-grid mb-24" style="margin-top:16px">
+  <div class="stat-card">
+    <div class="stat-icon"><i class="fas fa-tags"></i></div>
+    <div class="stat-info">
+      <div class="stat-value" style="font-size:16px;color:#2563eb">₹{{ "{:,.0f}".format(total_sales) }}</div>
+      <div class="stat-label">Total Sales</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon"><i class="fas fa-shopping-cart"></i></div>
+    <div class="stat-info">
+      <div class="stat-value" style="font-size:16px;color:#dc2626">₹{{ "{:,.0f}".format(total_purchase_cost) }}</div>
+      <div class="stat-label">Total Purchase Cost</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon"><i class="fas fa-receipt"></i></div>
+    <div class="stat-info">
+      <div class="stat-value" style="font-size:16px;color:#dc2626">₹{{ "{:,.0f}".format(total_cost) }}</div>
+      <div class="stat-label">Total Cost</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon"><i class="fas fa-chart-line"></i></div>
+    <div class="stat-info">
+      <div class="stat-value" style="font-size:16px;color:{% if gross_profit < 0 %}#dc2626{% else %}#16a34a{% endif %}">₹{{ "{:,.0f}".format(gross_profit) }}</div>
+      <div class="stat-label">Gross Profit</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon"><i class="fas fa-wallet"></i></div>
+    <div class="stat-info">
+      <div class="stat-value" style="font-size:16px;color:{% if net_revenue < 0 %}#dc2626{% else %}#16a34a{% endif %}">₹{{ "{:,.0f}".format(net_revenue) }}</div>
+      <div class="stat-label">Net Revenue (Net Profit)</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon"><i class="fas fa-car"></i></div>
+    <div class="stat-info">
+      <div class="stat-value">{{ total_vehicles_sold }}</div>
+      <div class="stat-label">Total Vehicles Sold</div>
     </div>
   </div>
 </div>
