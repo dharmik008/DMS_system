@@ -87,7 +87,8 @@ _KYC_EXEMPT_ENDPOINTS = {
 
 
 def kyc_required(f):
-    """Decorator that blocks access until ALL 3 KYC documents are approved by admin."""
+    """Decorator that blocks access until ALL 3 KYC documents are verified
+    (auto-approved by the verification engine at upload time)."""
     @wraps(f)
     def decorated(*args, **kwargs):
         if not g.user or g.user.get('role') != 'dealer':
@@ -123,7 +124,7 @@ def kyc_required(f):
                     names = ', '.join(doc_names[d] for d in rejected)
                     flash(f'Some KYC documents were rejected ({names}). Please re-upload them to continue.', 'error')
                 else:
-                    flash('Your KYC documents are under review. Please wait for admin approval.', 'info')
+                    flash('Please finish uploading all 3 KYC documents to continue.', 'info')
             else:
                 flash('Complete your KYC verification to continue using the DMS.', 'warning')
             return redirect(url_for('dealer.kyc_upload'))
@@ -171,16 +172,32 @@ def mark_notifications_read():
 @dealer_bp.route('/kyc/submit', methods=['POST'])
 @dealer_required
 def kyc_submit():
-    """Handle dealer KYC document upload."""
+    """Handle dealer KYC document upload.
+
+    Every file goes through the real verification engine
+    (utils/kyc_engine) before it is ever saved: image-quality checks
+    (blur, glare, exposure, screenshot, resolution), OCR + document-type
+    classification, per-document field validation (Aadhaar number / QR /
+    face / logo, PAN regex + logo), and cross-dealer duplicate
+    detection. A document that passes every check is saved AND
+    auto-approved immediately — the dealer's own verified upload is the
+    approval, no admin step required. A document that fails any check
+    is rejected immediately with the specific reason, without touching
+    the previously-saved file.
+    """
     from models import DealerKYC
-    from utils.upload_helpers import save_image, validate_image
+    from utils.upload_helpers import save_image
+    from utils.kyc_engine import duplicate as kyc_dup
+    from utils.kyc_engine.file_utils import sniff_real_extension, load_as_cv_image, pil_image_for_hash
+    from utils.kyc_engine.validator import validate_document, cross_validate_kyc, DOC_TYPE_MAP
+
+    cfg = current_app.config
     dealer_id = get_dealer_id()
 
     kyc = DealerKYC.query.filter_by(dealer_id=dealer_id).first()
     if not kyc:
         kyc = DealerKYC(dealer_id=dealer_id, kyc_status='pending')
         db.session.add(kyc)
-    from datetime import datetime
     kyc.submitted_at = _now_ist()
 
     folder = os.path.join(
@@ -190,56 +207,146 @@ def kyc_submit():
     )
     os.makedirs(folder, exist_ok=True)
     errors = []
+    saved_any = False
+
+    allowed_ext = cfg.get('KYC_ALLOWED_EXTENSIONS', {'jpg', 'jpeg', 'png', 'webp', 'pdf'})
+    max_bytes = cfg.get('KYC_MAX_UPLOAD_BYTES', 10 * 1024 * 1024)
 
     for doc_key in ('aadhaar_front', 'aadhaar_back', 'pan_card'):
         f = request.files.get(doc_key)
         if not f or not f.filename:
             continue
+        label = doc_key.replace('_', ' ').title()
+
         # Don't overwrite an already-approved document
         current_status = getattr(kyc, doc_key + '_status', 'pending') or 'pending'
         if current_status == 'approved':
-            flash(f'{doc_key.replace("_"," ").title()} is already approved — skipped.', 'info')
+            flash(f'{label} is already approved — skipped.', 'info')
             continue
-        ok, err = validate_image(f)
-        if not ok:
-            errors.append(f'{doc_key}: {err}')
+
+        # ── 1) Basic file checks (extension + size) ─────────────────────
+        ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
+        if ext not in allowed_ext:
+            errors.append(f'{label}: Unsupported file type. Allowed: {", ".join(sorted(allowed_ext))}.')
             continue
+
+        file_bytes = f.stream.read()
+        f.stream.seek(0)
+        if not file_bytes:
+            errors.append(f'{label}: Uploaded file is empty.')
+            continue
+        if len(file_bytes) > max_bytes:
+            errors.append(f'{label}: File exceeds the {max_bytes // (1024*1024)} MB limit.')
+            continue
+
+        # ── 2) Magic-byte sniff — reject a mislabeled extension ─────────
+        real_ext = sniff_real_extension(file_bytes)
+        if real_ext is None:
+            errors.append(f'{label}: File content does not match a supported image/PDF format.')
+            continue
+
+        # ── 3) Decode + run the full verification pipeline ──────────────
+        try:
+            cv_image = load_as_cv_image(file_bytes, real_ext)
+        except Exception:
+            errors.append(f'{label}: Could not read this file. It may be corrupted.')
+            continue
+
+        expected_type = DOC_TYPE_MAP[doc_key]
+        result = validate_document(cv_image, expected_type, cfg)
+        if not result.ok:
+            errors.append(f'{label}: {result.error_message}')
+            setattr(kyc, doc_key + '_status', 'rejected')
+            setattr(kyc, doc_key + '_reject', result.error_message)
+            setattr(kyc, doc_key + '_reviewed_by', 'Auto-KYC Engine')
+            setattr(kyc, doc_key + '_reviewed_at', _now_ist())
+            continue
+
+        # ── 4) Cross-dealer duplicate detection (SHA256 + pHash) ────────
+        sha256_hash = kyc_dup.compute_sha256(file_bytes)
+        phash = kyc_dup.compute_phash(pil_image_for_hash(file_bytes, cv_image, real_ext))
+        duplicate = kyc_dup.find_duplicate(sha256_hash, phash)
+        if duplicate and not (duplicate.dealer_id == dealer_id and duplicate.doc_type == doc_key):
+            msg = 'This document has already been uploaded (duplicate detected).'
+            errors.append(f'{label}: {msg}')
+            setattr(kyc, doc_key + '_status', 'rejected')
+            setattr(kyc, doc_key + '_reject', msg)
+            setattr(kyc, doc_key + '_reviewed_by', 'Auto-KYC Engine')
+            setattr(kyc, doc_key + '_reviewed_at', _now_ist())
+            continue
+
+        # ── 5) Passed everything — save the file & record extracted data ─
+        f.stream.seek(0)
         saved = save_image(f, folder, prefix=doc_key.replace('_', '-'), vehicle_mode=False)
-        if saved:
-            setattr(kyc, doc_key, saved)
-            # Reset this doc's status back to pending (awaiting re-review)
-            setattr(kyc, doc_key + '_status', 'pending')
-            setattr(kyc, doc_key + '_reject', None)
-            # ── Register in Centralized Document Storage ──────────────────────
-            try:
-                from db import cds_register
-                cds_register({
-                    'dealer_id':     dealer_id,
-                    'file_name':     saved,
-                    'original_name': f.filename,
-                    'file_path':     os.path.join('uploads', 'dealers', str(dealer_id), saved),
-                    'module_name':   'KYC',
-                    'document_type': doc_key.replace('_', ' ').title(),
-                    'uploaded_by':   dealer_id,
-                    'performed_by':  f'dealer:{dealer_id}',
-                })
-            except Exception:
-                pass  # Never break the main KYC flow
-            # ─────────────────────────────────────────────────────────────────
-        else:
-            errors.append(f'Failed to save {doc_key}.')
+        if not saved:
+            errors.append(f'Failed to save {label}.')
+            continue
+
+        setattr(kyc, doc_key, saved)
+        # ── Verification pipeline passed => auto-approve right here. ────
+        # The dealer's own document now IS the approval — no admin
+        # review step is required for a document that clears every
+        # image-quality, OCR and field check plus the duplicate check.
+        setattr(kyc, doc_key + '_status', 'approved')
+        setattr(kyc, doc_key + '_reject', None)
+        setattr(kyc, doc_key + '_reviewed_by', 'Auto-KYC Engine')
+        setattr(kyc, doc_key + '_reviewed_at', _now_ist())
+
+        if expected_type == 'pan':
+            kyc.pan_number = result.extracted_number
+            kyc.pan_name = result.extracted_name
+            kyc.pan_dob = result.extracted_dob
+        elif expected_type == 'aadhaar_front':
+            kyc.aadhaar_front_number = result.extracted_number
+            kyc.aadhaar_front_name = result.extracted_name
+            kyc.aadhaar_front_dob = result.extracted_dob
+        else:  # aadhaar_back
+            kyc.aadhaar_back_number = result.extracted_number
+            kyc.aadhaar_back_name = result.extracted_name
+
+        kyc_dup.register_hash(sha256_hash, phash, dealer_id, doc_key, db.session)
+        saved_any = True
+
+        # ── Register in Centralized Document Storage ──────────────────────
+        try:
+            from db import cds_register
+            cds_register({
+                'dealer_id':     dealer_id,
+                'file_name':     saved,
+                'original_name': f.filename,
+                'file_path':     os.path.join('uploads', 'dealers', str(dealer_id), saved),
+                'module_name':   'KYC',
+                'document_type': label,
+                'uploaded_by':   dealer_id,
+                'performed_by':  f'dealer:{dealer_id}',
+            })
+        except Exception:
+            pass  # Never break the main KYC flow
+        # ─────────────────────────────────────────────────────────────────
+
+    # ── Cross-document validation once all 3 slots are filled ───────────
+    # Informational only — logged on the record, never blocks approval,
+    # since OCR misreads make hard-failing on these too risky.
+    if kyc.aadhaar_front and kyc.aadhaar_back and kyc.pan_card:
+        issues = cross_validate_kyc(kyc, cfg)
+        kyc.cross_validation_notes = '; '.join(issues) if issues else None
+        if issues:
+            flash('Documents verified and approved, but a cross-check note was recorded: '
+                  + '; '.join(issues), 'warning')
 
     if errors:
         for e in errors:
             flash(e, 'error')
-    else:
-        flash('KYC documents uploaded successfully.', 'success')
+    if saved_any and not errors:
+        flash('KYC documents verified and approved successfully.', 'success')
+    elif saved_any:
+        flash('Some documents were verified and approved; see errors above for the rest.', 'info')
 
     # Recalculate overall status based on per-doc statuses
     kyc.recalculate_status()
     db.session.commit()
     log_dealer_action('Submitted KYC documents', 'KYC',
-                       status='Failed' if errors else 'Success')
+                       status='Failed' if errors and not saved_any else 'Success')
     return redirect(url_for('dealer.kyc_upload'))
 
 
@@ -273,6 +380,13 @@ def dashboard():
                            recent_deals=recent_deals,
                            recent_inquiries=recent_inquiries,       # FIXED: now passed to template
                            pending_inquiries=pending_inquiries,     # FIXED: badge count for pending
+                           # ── Financial KPI cards (Net Revenue replaces Total Revenue) ──
+                           net_revenue=financial['net_revenue'],
+                           total_sales=financial['total_sales'],
+                           total_purchase_cost=financial['total_purchase_cost'],
+                           total_cost=financial['total_cost'],
+                           gross_profit=financial['gross_profit'],
+                           total_vehicles_sold=financial['total_vehicles_sold'],
                            )
 
 # ========== INVENTORY ==========
@@ -286,17 +400,262 @@ def inventory():
     page = request.args.get('page', 1, type=int)
     status = request.args.get('status', '')
     fuel = request.args.get('fuel', '')
+    approval = request.args.get('approval', '')
     search = request.args.get('search', '')
 
     vehicles = vehicles_get_by_dealer(
-        dealer_id, status=status, fuel=fuel, search=search, page=page)
+        dealer_id, status=status, fuel=fuel, approval=approval, search=search, page=page)
 
     # Enrich each vehicle with dynamically computed issue data
     for v in vehicles['items']:
         v['vehicle_issues'] = detect_vehicle_issues(v)
 
-    return render_template('dealer/inventory.html', vehicles=vehicles, status_filter=status, fuel_filter=fuel, search=search)
+    # Counts for the approval-status tab bar — always across ALL of this
+    # dealer's vehicles (unaffected by the current filter/search) so the
+    # tab labels stay stable while browsing.
+    from models import Vehicle as _V
+    all_dealer_vehicles = _V.query.filter_by(dealer_id=dealer_id).all()
+    approval_counts = {
+        'all':      len(all_dealer_vehicles),
+        'pending':  sum(1 for v in all_dealer_vehicles if v.approval_status == 'pending'),
+        'approved': sum(1 for v in all_dealer_vehicles if v.approval_status == 'approved'),
+        'rejected': sum(1 for v in all_dealer_vehicles if v.approval_status == 'rejected'),
+    }
 
+    return render_template('dealer/inventory.html', vehicles=vehicles, status_filter=status,
+                            fuel_filter=fuel, approval_filter=approval, search=search,
+                            approval_counts=approval_counts)
+
+
+
+def _format_price_inr(val):
+    """Format a numeric price string into Indian-style '₹5.25 Lakh' / '₹1.10 Crore' wording."""
+    try:
+        num = float(str(val).replace(',', '').strip())
+    except (TypeError, ValueError):
+        return None
+    if num <= 0:
+        return None
+    if num >= 1_00_00_000:
+        return f"₹{num / 1_00_00_000:.2f} Crore".replace('.00', '')
+    if num >= 1_00_000:
+        return f"₹{num / 1_00_000:.2f} Lakh".replace('.00', '')
+    return f"₹{int(num):,}"
+
+
+def _build_local_description(data):
+    """Build a natural-sounding used-car listing description purely from the
+    fields the dealer has already filled in — no external AI/API call needed."""
+    import random
+
+    make = (data.get('make') or '').strip()
+    model = (data.get('model') or '').strip()
+    variant = (data.get('variant') or '').strip()
+    year = data.get('year')
+    color = (data.get('color') or '').strip()
+    fuel_type = (data.get('fuel_type') or '').strip()
+    transmission = (data.get('transmission') or '').strip()
+    mileage = data.get('mileage')
+    engine_cc = data.get('engine_cc')
+    price = data.get('price')
+    condition = (data.get('condition') or '').strip()
+    accident_history = (data.get('accident_history') or '').strip()
+    keys_available = (data.get('keys_available') or '').strip()
+    major_issues = (data.get('major_issues') or '').strip()
+
+    def clean_num(v):
+        if v is None:
+            return None
+        try:
+            s = str(v).replace(',', '').strip()
+            return s if s and s not in ('0', 'None') else None
+        except Exception:
+            return None
+
+    mileage = clean_num(mileage)
+    engine_cc = clean_num(engine_cc)
+    year = str(year).strip() if year not in (None, '', 0, '0') else None
+
+    # ── Sentence 1: headline ─────────────────────────────────────────────
+    title_bits = []
+    if year:
+        title_bits.append(year)
+    title_bits.append(make)
+    title_bits.append(model)
+    if variant:
+        title_bits.append(variant)
+    headline_name = ' '.join(b for b in title_bits if b)
+
+    headline_openers = [
+        f"Presenting a well-maintained {headline_name}, ready for its next owner.",
+        f"Up for sale: a {headline_name} that's been kept in great shape.",
+        f"Here's a {headline_name} in solid, dependable condition.",
+        f"Check out this {headline_name}, available now at a great price.",
+    ]
+    sentences = [random.choice(headline_openers)]
+
+    # ── Sentence 2: spec highlights (fuel, transmission, engine, color) ──
+    spec_bits = []
+    if fuel_type:
+        spec_bits.append(f"runs on {fuel_type}")
+    if transmission:
+        spec_bits.append(f"comes with {transmission} transmission")
+    if engine_cc:
+        spec_bits.append(f"a {engine_cc}cc engine")
+    if color:
+        spec_bits.append(f"finished in an attractive {color} shade")
+    if spec_bits:
+        if len(spec_bits) == 1:
+            spec_sentence = f"It {spec_bits[0]}."
+        else:
+            spec_sentence = "It " + ", ".join(spec_bits[:-1]) + f" and {spec_bits[-1]}."
+        sentences.append(spec_sentence)
+
+    # ── Sentence 3: mileage / condition ──────────────────────────────────
+    cond_bits = []
+    if mileage:
+        try:
+            mileage_fmt = f"{int(float(mileage)):,}"
+        except Exception:
+            mileage_fmt = mileage
+        cond_bits.append(f"has covered {mileage_fmt} km")
+    if condition:
+        cond_bits.append(f"is in {condition.lower()} condition")
+    if cond_bits:
+        cond_sentence = "The vehicle " + " and ".join(cond_bits) + "."
+        sentences.append(cond_sentence)
+
+    # ── Sentence 4: accident history / keys / issues (honesty first) ────
+    honesty_bits = []
+    if accident_history:
+        al = accident_history.lower()
+        if al in ('no', 'none', 'no accident', 'accident free', 'accident-free'):
+            honesty_bits.append("no reported accident history")
+        else:
+            honesty_bits.append(f"accident history: {accident_history}")
+    if keys_available:
+        kl = keys_available.lower()
+        if kl in ('2', 'two', 'both', 'yes', '1', 'one'):
+            honesty_bits.append(f"{keys_available} key(s) available" if keys_available not in ('yes',) else "keys available")
+    if honesty_bits:
+        sentences.append("Comes with " + " and ".join(honesty_bits) + ".")
+
+    if major_issues:
+        sentences.append(f"Please note the following for full transparency: {major_issues}.")
+
+    # ── Sentence 5: price + closing call to action ───────────────────────
+    price_fmt = _format_price_inr(price)
+    closers = []
+    if price_fmt:
+        closers.append(f"Available at an asking price of {price_fmt}")
+        if str(data.get('negotiable', '')).lower() in ('true', '1', 'yes', 'on'):
+            closers.append("(price negotiable)")
+    closing = " ".join(closers).strip()
+    if closing:
+        sentences.append(closing + ". Contact us today to book a test drive!")
+    else:
+        sentences.append("Contact us today to book a test drive!")
+
+    return " ".join(s.strip() for s in sentences if s and s.strip())
+
+
+@dealer_bp.route('/vehicles/ai-description', methods=['POST'])
+@dealer_required
+def ai_generate_description():
+    """Generate a marketing-ready vehicle description locally from whatever
+    vehicle fields the dealer has filled in on the Add/Edit form.
+
+    This does NOT call any external AI API and needs no API key —
+    it builds a natural-sounding description directly from the form data."""
+    data = request.get_json(silent=True) or {}
+
+    make = (data.get('make') or '').strip()
+    model = (data.get('model') or '').strip()
+    if not make or not model:
+        return jsonify(success=False, error='Make and Model are required.'), 400
+
+    try:
+        text = _build_local_description(data)
+        if not text:
+            raise ValueError('Could not build description from provided fields.')
+        return jsonify(success=True, description=text)
+    except Exception as e:
+        current_app.logger.error(f"Local description generation failed: {e}")
+        return jsonify(success=False, error='Could not generate description right now. Please try again.'), 502
+
+
+MANDATORY_SLOTS = [
+    ('img_front',      'front',      0),
+    ('img_rear',       'rear',       1),
+    ('img_right_side', 'right_side', 2),
+    ('img_left_side',  'left_side',  3),
+    ('img_engine',     'engine',     4),
+    ('img_boot',       'boot',       5),
+    ('img_interior',   'interior',   6),
+]
+SLOT_LABELS = {
+    'front': 'Front View', 'rear': 'Rear / Tail View',
+    'right_side': 'Right Side View', 'left_side': 'Left Side View',
+    'engine': 'Engine Bay', 'boot': 'Boot / Trunk', 'interior': 'Interior',
+}
+
+
+@dealer_bp.route('/inventory/api/classify-photo', methods=['POST'])
+@dealer_required
+def classify_vehicle_photo_api():
+    """Called by the Add/Edit Vehicle form the instant a photo is selected —
+    strict per-angle AI check so Front box only accepts a front photo, Boot
+    box only accepts a boot photo, etc. Mirrors /api/classify from the
+    standalone car-upload-single tool."""
+    from utils.vehicle_photo_ai import verify_vehicle_photo, SLOT_TO_LABEL
+
+    slot = request.form.get('slot')
+    if slot not in SLOT_TO_LABEL:
+        return jsonify(ok=False, error='Unknown photo slot.'), 400
+    if 'file' not in request.files:
+        return jsonify(ok=False, error='No file provided.'), 400
+
+    result = verify_vehicle_photo(request.files['file'], slot)
+    if not result['ok']:
+        return jsonify(ok=False, error=result['error']), 422
+    return jsonify(ok=True)
+
+
+@dealer_bp.route('/inventory/api/estimate-price', methods=['POST'])
+@dealer_required
+def estimate_vehicle_price_api():
+    """Called by the "Estimate Price" button on the Add/Edit Vehicle form.
+    Combines the vehicle's basic details, its Condition Details answers,
+    and (optionally) the photos already selected for the 7 mandatory
+    slots into a suggested asking price. See utils/vehicle_price_ai.py
+    for exactly how the number is derived — always returned with a full
+    breakdown, never a bare number."""
+    from utils.vehicle_price_ai import estimate_vehicle_price
+
+    vehicle_data = {
+        'year':                request.form.get('year'),
+        'mileage':              request.form.get('mileage'),
+        'reference_price':      request.form.get('reference_price'),
+        'accident_history':     request.form.get('accident_history', 'NA'),
+        'loan_status':          request.form.get('loan_status', 'NA'),
+        'rc_service_records':   request.form.get('rc_service_records', 'NA'),
+        'major_issues':         ','.join(request.form.getlist('major_issues')) or 'None',
+        'keys_available':       request.form.get('keys_available', 'NA'),
+        'body_panel_status':    request.form.get('body_panel_status', 'NA'),
+    }
+
+    # Any of the 7 mandatory photo slots the dealer has already picked —
+    # purely optional; the estimate still works from details alone.
+    image_files = []
+    for field_name, _img_type, _sort in MANDATORY_SLOTS:
+        f = request.files.get(field_name)
+        if f and f.filename and is_allowed_image(f.filename):
+            image_files.append(f)
+
+    result = estimate_vehicle_price(vehicle_data, image_files)
+    if not result['ok']:
+        return jsonify(result), 400
+    return jsonify(result)
 
 
 @dealer_bp.route('/inventory/add', methods=['GET', 'POST'])
@@ -306,31 +665,30 @@ def add_vehicle():
     dealer_id = get_dealer_id()
 
     if request.method == 'POST':
-        # ── Server-side: require all 7 mandatory image slots ─────────────────────
-        MANDATORY_SLOTS = [
-            ('img_front',      'front',      0),
-            ('img_rear',       'rear',       1),
-            ('img_right_side', 'right_side', 2),
-            ('img_left_side',  'left_side',  3),
-            ('img_engine',     'engine',     4),
-            ('img_boot',       'boot',       5),
-            ('img_interior',   'interior',   6),
-        ]
-        SLOT_LABELS = {
-            'front': 'Front View', 'rear': 'Rear / Tail View',
-            'right_side': 'Right Side View', 'left_side': 'Left Side View',
-            'engine': 'Engine Bay', 'boot': 'Boot / Trunk', 'interior': 'Interior',
-        }
+        # ── Server-side: require all 7 mandatory image slots, present AND
+        # verified to actually show that angle (same AI gate as the live
+        # per-field check, so client-side JS can never be bypassed) ────────
+        from utils.vehicle_photo_ai import verify_vehicle_photo
+
         missing_slots = []
+        slot_results = {}
         for field_name, img_type, _ in MANDATORY_SLOTS:
             f = request.files.get(field_name)
             if not f or not f.filename or not is_allowed_image(f.filename):
                 missing_slots.append(SLOT_LABELS.get(img_type, img_type))
+                continue
+            f.stream.seek(0)
+            verdict = verify_vehicle_photo(f, img_type)
+            f.stream.seek(0)
+            if not verdict['ok']:
+                missing_slots.append(f"{SLOT_LABELS.get(img_type, img_type)} — {verdict['error']}")
+            else:
+                slot_results[img_type] = True
 
         if missing_slots:
             flash(
-                'Please upload all required vehicle photos before submitting: '
-                + ', '.join(missing_slots),
+                'Please fix the following vehicle photos before submitting: '
+                + '; '.join(missing_slots),
                 'error'
             )
             return render_template('dealer/vehicle_form.html', action='Add', vehicle=None)
@@ -544,8 +902,30 @@ def edit_vehicle(vid):
                 current_app.logger.error(f'edit_vehicle image commit error: {e}')
 
         vehicle_update(vid, update_data)
+
+        # ── Featured Listing directly controls marketplace approval ─────────
+        # There is no admin approval step. On save, the "Featured Listing"
+        # checkbox decides publication: checked → 'approved' (live on the
+        # marketplace), unchecked → 'pending' (not marketplace-listed).
+        # vehicle_update() blocks 'approval_status', so we set it directly
+        # here based on the submitted featured flag.
+        try:
+            from extensions import db
+            from models import Vehicle as _V
+            _v = _V.query.get(vid)
+            if _v:
+                _v.approval_status = 'approved' if update_data.get('featured') else 'pending'
+                db.session.commit()
+        except Exception as e:
+            try:
+                from extensions import db
+                db.session.rollback()
+            except Exception:
+                pass
+            current_app.logger.error(f'edit_vehicle approval-set error: {e}')
+
         log_dealer_action(f'Updated vehicle: {update_data.get("make")} {update_data.get("model")} (ID:{vid})', 'Vehicles')
-        flash('Vehicle updated successfully', 'success')
+        flash('Vehicle updated successfully.', 'success')
         return redirect(url_for('dealer.inventory'))
 
     # ── GET: load existing typed images for pre-filling the form ─────────────
@@ -1231,7 +1611,14 @@ def add_deal():
             'bank_name': request.form.get('bank_name'),
             'status': request.form.get('status'),
             'booking_amount': float(request.form.get('booking_amount')) if request.form.get('booking_amount') else 0,
-            'notes': request.form.get('notes')
+            'notes': request.form.get('notes'),
+            # ── Financial Summary (Revenue & Profit Management) ────────────
+            'purchase_price': float(request.form.get('purchase_price')) if request.form.get('purchase_price') else 0,
+            'transportation_cost': float(request.form.get('transportation_cost')) if request.form.get('transportation_cost') else 0,
+            'repair_cost': float(request.form.get('repair_cost')) if request.form.get('repair_cost') else 0,
+            'registration_cost': float(request.form.get('registration_cost')) if request.form.get('registration_cost') else 0,
+            'marketing_cost': float(request.form.get('marketing_cost')) if request.form.get('marketing_cost') else 0,
+            'other_expenses': float(request.form.get('other_expenses')) if request.form.get('other_expenses') else 0,
         }
 
         deal_id = deal_create(deal_data)
@@ -1283,7 +1670,14 @@ def edit_deal(did_):
             'bank_name': request.form.get('bank_name'),
             'status': request.form.get('status'),
             'booking_amount': float(request.form.get('booking_amount')) if request.form.get('booking_amount') else 0,
-            'notes': request.form.get('notes')
+            'notes': request.form.get('notes'),
+            # ── Financial Summary (Revenue & Profit Management) ────────────
+            'purchase_price': float(request.form.get('purchase_price')) if request.form.get('purchase_price') else 0,
+            'transportation_cost': float(request.form.get('transportation_cost')) if request.form.get('transportation_cost') else 0,
+            'repair_cost': float(request.form.get('repair_cost')) if request.form.get('repair_cost') else 0,
+            'registration_cost': float(request.form.get('registration_cost')) if request.form.get('registration_cost') else 0,
+            'marketing_cost': float(request.form.get('marketing_cost')) if request.form.get('marketing_cost') else 0,
+            'other_expenses': float(request.form.get('other_expenses')) if request.form.get('other_expenses') else 0,
         }
 
         deal_update(did_, update_data)
@@ -1319,6 +1713,8 @@ def invoice(did_):
 @feature_required('finance')
 def finance():
     dealer_id = get_dealer_id()
+    # Finance is computed live from Deal records, so it is always in sync with
+    # Deals & Sales / Dashboard / Reports — one query, one source of truth.
     financial = deals_get_financial_summary(dealer_id)
     recent_deals = deals_get_by_dealer(dealer_id)[:10]
 
@@ -1328,7 +1724,14 @@ def finance():
                            loan_deals=financial['loan_deals'],
                            cash_deals=financial['cash_deals'],
                            total_gst=financial['total_gst'],
-                           recent_deals=recent_deals
+                           recent_deals=recent_deals,
+                           # ── Financial KPIs ──────────────────────────────
+                           net_revenue=financial['net_revenue'],
+                           total_sales=financial['total_sales'],
+                           total_purchase_cost=financial['total_purchase_cost'],
+                           total_cost=financial['total_cost'],
+                           gross_profit=financial['gross_profit'],
+                           total_vehicles_sold=financial['total_vehicles_sold'],
                            )
 
 # ========== DOCUMENTS ==========
@@ -1449,10 +1852,10 @@ def reports():
     fuels = vehicles_get_fuel_breakdown(dealer_id)
     monthly = deals_get_monthly_revenue(dealer_id)
     all_deals = deals_get_by_dealer(dealer_id)
+    financial = deals_get_financial_summary(dealer_id)
 
     return render_template('dealer/reports.html',
-                           total_revenue=sum(
-                               d['final_price'] for d in all_deals if d['status'] == 'delivered'),
+                           total_revenue=financial['net_revenue'],
                            total_inventory=inventory_summary['total'],
                            available_count=inventory_summary['available'],
                            sold_count=inventory_summary['sold'],
@@ -1462,7 +1865,14 @@ def reports():
                            all_deals=all_deals,
                            sources=sources,
                            fuels=fuels,
-                           monthly=monthly
+                           monthly=monthly,
+                           # ── Financial Summary totals for export/print ──────
+                           net_revenue=financial['net_revenue'],
+                           total_sales=financial['total_sales'],
+                           total_purchase_cost=financial['total_purchase_cost'],
+                           total_cost=financial['total_cost'],
+                           gross_profit=financial['gross_profit'],
+                           total_vehicles_sold=financial['total_vehicles_sold'],
                            )
 
 # ========== INQUIRIES ==========
