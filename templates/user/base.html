@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<script src="{{ url_for('static', filename='js/csrf.js') }}"></script>
 <title>{% block title %}Caryanams — Find Your Dream Car{% endblock %}</title>
 <meta name="description" content="{% block meta_desc %}Browse thousands of cars on Caryanams — India's trusted automobile marketplace.{% endblock %}">
 <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
