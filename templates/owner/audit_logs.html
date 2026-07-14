@@ -11,8 +11,11 @@
 </div>
 
 <div class="toolbar" style="margin-bottom:14px">
-  <form method="get" style="display:flex;gap:8px;align-items:center">
-    <input class="search-box" name="q" placeholder="Search events, actors, descriptions…" value="{{ q }}">
+  <form method="get" style="display:flex;gap:8px;align-items:center" id="filterForm">
+    <span style="position:relative;display:inline-block;">
+      <input class="search-box" name="q" id="auditSearchInput" placeholder="Search events, actors, descriptions…" value="{{ q }}" style="padding-right:32px;">
+      <button type="button" id="auditSearchMic" class="voice-search-btn" title="Search by voice"><i class="fas fa-microphone"></i></button>
+    </span>
     <button type="submit" class="btn btn-ghost btn-sm">Search</button>
     {% if q %}<a href="{{ url_for('owner.audit_logs') }}" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
   </form>
@@ -102,4 +105,8 @@
   </div>
   {% endif %}
 </div>
+<script src="{{ url_for('static', filename='js/voice-search.js') }}"></script>
+<script>
+  attachVoiceSearch('auditSearchInput', 'auditSearchMic', { autoSubmitForm: 'filterForm' });
+</script>
 {% endblock %}
