@@ -1,11 +1,11 @@
- {% extends 'admin/base.html' %}
+{% extends 'admin/base.html' %}
 {% block title %}Centralized Document Storage{% endblock %}
 
 {% block content %}
 <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
   <div>
     <h1 style="font-size:22px;font-weight:700;margin:0;">Centralized Document Storage</h1>
-    <p style="color:#6b7280;font-size:13px;margin:4px 0 0;">Master repository — documents are permanently retained until explicitly deleted or reassigned.</p>
+    <p style="color:#6b7280;font-size:13px;margin:4px 0 0;">Master repository — documents are permanently retained until explicitly deleted.</p>
   </div>
   {% if session.get('admin_logged_in') %}
   <button onclick="document.getElementById('uploadModal').style.display='flex'"
@@ -244,19 +244,11 @@
               </a>
               {% endif %}
 
-              {# Reassign — Super Admin only, active docs only #}
-              {% if rec.status != 'deleted' and session.get('admin_logged_in') %}
-              <button onclick="showReassignModal({{ rec.id }}, '{{ (rec.original_name or rec.file_name)|replace("'","") }}', '{{ (rec.dealer.name if rec.dealer else 'Unassigned')|replace("'","") }}', '{{ rec.dealer.display_id if rec.dealer else '' }}', {{ rec.dealer_id or 'null' }})"
-                      title="Reassign to Another Dealer"
-                      style="padding:4px 10px;font-size:11px;background:#f3e8ff;color:#7c3aed;border:1px solid #c4b5fd;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">
-                👤 Reassign
-              </button>
-              {% endif %}
-
               {# Soft Delete — Super Admin only, active docs only #}
               {% if rec.status != 'deleted' and session.get('admin_logged_in') %}
               <form method="POST" action="{{ url_for('admin.cds_soft_delete_doc', record_id=rec.id) }}"
                     id="del_{{ rec.id }}" style="display:inline;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="button"
                         onclick="confirmSoftDelete({{ rec.id }}, '{{ (rec.original_name or rec.file_name)|replace("'","") }}')"
                         title="Soft Delete (hide from dealer)"
@@ -296,69 +288,6 @@
 </div>
 
 
-{# ═══════════════════════════════ REASSIGN MODAL ═══════════════════════════════ #}
-<div id="reassignModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;">
-  <div style="background:#fff;border-radius:16px;padding:32px;width:440px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.25);">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-      <h3 style="margin:0;font-size:17px;font-weight:700;color:#1e293b;">👤 Reassign Document</h3>
-      <button onclick="closeModal('reassignModal')" style="background:none;border:none;font-size:20px;cursor:pointer;color:#9ca3af;line-height:1;">×</button>
-    </div>
-
-    {# Document info banner #}
-    <div id="reassignDocInfo" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:20px;">
-      <div style="font-size:12px;color:#6b7280;font-weight:600;margin-bottom:4px;">DOCUMENT</div>
-      <div id="reassignDocName" style="font-weight:600;color:#1e293b;font-size:14px;"></div>
-      <div style="margin-top:8px;font-size:12px;color:#6b7280;font-weight:600;">CURRENT OWNER</div>
-      <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
-        <span id="reassignCurrentOwnerName" style="font-weight:600;color:#1e293b;font-size:13px;"></span>
-        <span id="reassignCurrentOwnerBadge" style="font-size:11px;color:#6366f1;font-weight:700;background:#eef2ff;padding:1px 7px;border-radius:4px;"></span>
-      </div>
-    </div>
-
-    <form id="reassignForm" method="POST">
-      <div style="margin-bottom:16px;">
-        <label style="font-size:13px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">
-          New Dealer <span style="color:#dc2626;">*</span>
-        </label>
-        <select name="new_dealer_id" id="reassignDealerSelect"
-                style="width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;background:#fff;">
-          <option value="">— Select dealer —</option>
-          {% for d in dealers %}
-          <option value="{{ d.id }}" data-name="{{ d.name }}">
-            {{ d.display_id or ('D' ~ d.id) }} — {{ d.name }}
-          </option>
-          {% endfor %}
-        </select>
-        <div id="sameOwnerWarning" style="display:none;color:#dc2626;font-size:12px;margin-top:4px;">
-          ⚠ This dealer already owns the document.
-        </div>
-      </div>
-
-      <div style="margin-bottom:20px;">
-        <label style="font-size:13px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">
-          Reason for Reassignment <span style="color:#dc2626;">*</span>
-        </label>
-        <textarea name="note" id="reassignNote" rows="3"
-                  placeholder="Describe why this document is being reassigned…"
-                  style="width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;resize:vertical;box-sizing:border-box;"></textarea>
-        <div id="noteWarning" style="display:none;color:#dc2626;font-size:12px;margin-top:4px;">
-          ⚠ Reason is required.
-        </div>
-      </div>
-
-      <div style="display:flex;gap:10px;">
-        <button type="button" onclick="submitReassign()" class="btn btn-primary" style="flex:1;padding:11px;font-size:14px;">
-          Reassign
-        </button>
-        <button type="button" onclick="closeModal('reassignModal')" class="btn btn-outline" style="flex:1;padding:11px;font-size:14px;">
-          Cancel
-        </button>
-      </div>
-    </form>
-  </div>
-</div>
-
-
 {# ═══════════════════════════════ UPLOAD MODAL ═══════════════════════════════ #}
 <div id="uploadModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;">
   <div style="background:#fff;border-radius:16px;padding:32px;width:460px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.25);">
@@ -367,6 +296,7 @@
       <button onclick="closeModal('uploadModal')" style="background:none;border:none;font-size:20px;cursor:pointer;color:#9ca3af;line-height:1;">×</button>
     </div>
     <form method="POST" action="{{ url_for('admin.cds_upload_doc') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div style="margin-bottom:14px;">
         <label style="font-size:13px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">
           File <span style="color:#dc2626;">*</span>
@@ -417,45 +347,6 @@
 
 
 <script>
-var _currentOwnerId = null;
-
-function showReassignModal(recId, docName, ownerName, ownerBadge, ownerId) {
-  _currentOwnerId = ownerId;
-  document.getElementById('reassignDocName').textContent   = docName;
-  document.getElementById('reassignCurrentOwnerName').textContent  = ownerName;
-  document.getElementById('reassignCurrentOwnerBadge').textContent = ownerBadge || '';
-  document.getElementById('reassignNote').value            = '';
-  document.getElementById('sameOwnerWarning').style.display = 'none';
-  document.getElementById('noteWarning').style.display     = 'none';
-  document.getElementById('reassignDealerSelect').value    = '';
-
-  var form = document.getElementById('reassignForm');
-  form.action = '/admin/document-storage/' + recId + '/reassign';
-  document.getElementById('reassignModal').style.display = 'flex';
-}
-
-function submitReassign() {
-  var sel  = document.getElementById('reassignDealerSelect');
-  var note = document.getElementById('reassignNote').value.trim();
-  var valid = true;
-
-  if (parseInt(sel.value) === _currentOwnerId) {
-    document.getElementById('sameOwnerWarning').style.display = 'block';
-    valid = false;
-  } else {
-    document.getElementById('sameOwnerWarning').style.display = 'none';
-  }
-  if (!note) {
-    document.getElementById('noteWarning').style.display = 'block';
-    valid = false;
-  } else {
-    document.getElementById('noteWarning').style.display = 'none';
-  }
-  if (!sel.value) { valid = false; }
-
-  if (valid) document.getElementById('reassignForm').submit();
-}
-
 function confirmSoftDelete(recId, docName) {
   if (confirm('Delete "' + docName + '"?\n\nThis will hide it from the dealer. The file is NOT removed from disk.')) {
     document.getElementById('del_' + recId).submit();
@@ -467,10 +358,11 @@ function closeModal(id) {
 }
 
 // Close modals on backdrop click
-['reassignModal','uploadModal'].forEach(function(id) {
+['uploadModal'].forEach(function(id) {
   document.getElementById(id).addEventListener('click', function(e) {
     if (e.target === this) closeModal(id);
   });
 });
 </script>
 {% endblock %}
+     
