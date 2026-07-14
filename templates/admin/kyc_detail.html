@@ -234,6 +234,7 @@
             ↑ Replace
           </button>
           <form method="POST" action="{{ url_for('admin.kyc_upload_docs', dealer_id=dealer.id) }}" enctype="multipart/form-data" style="display:none;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="file" id="rep_{{ doc_key }}" name="{{ doc_key }}" accept=".jpg,.jpeg,.png,.webp"
                    onchange="this.closest('form').submit()">
           </form>
@@ -252,6 +253,7 @@
       Allowed formats: JPG, JPEG, PNG, WEBP · Max size: 10 MB per file
     </div>
     <form method="POST" action="{{ url_for('admin.kyc_upload_docs', dealer_id=dealer.id) }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">
         {% for field, label in [('aadhaar_front','Aadhaar Front'),('aadhaar_back','Aadhaar Back'),('pan_card','PAN Card')] %}
         {% set cur_file = kyc[field] if kyc and kyc[field] else None %}
