@@ -5,6 +5,7 @@
 {% block content %}
 <div style="max-width:960px">
   <form method="POST" enctype="multipart/form-data" id="vehicleForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="card mb-24">
       <div class="card-header">
         <div class="card-title"><i class="fas fa-car" style="margin-right:8px;color:var(--gold-accent)"></i>Vehicle Information</div>
@@ -59,7 +60,7 @@
           </div>
           <div class="form-group">
             <label>Asking Price (₹) *</label>
-            <input type="number" name="price" min="0" step="1000" placeholder="e.g. 850000" value="{{ vehicle['price'] if vehicle else '' }}" required>
+            <input type="number" name="price" id="askingPriceInput" min="0" step="1000" placeholder="e.g. 850000" value="{{ vehicle['price'] if vehicle else '' }}" required>
           </div>
           <div class="form-group">
             <label>Condition</label>
@@ -141,6 +142,9 @@
     .vph-box:hover{border-color:#6366f1;background:#f4f4ff}
     .vph-box.filled{border-color:#22c55e;border-style:solid;background:#f0fdf4}
     .vph-box.filled:hover{border-color:#16a34a;background:#dcfce7}
+    .vph-box.vph-checking{border-color:#f59e0b;border-style:dashed;background:#fffbeb}
+    .vph-box.vph-invalid{border-color:#dc2626;border-style:solid;background:#fef2f2}
+    .vph-box.vph-invalid.filled{border-color:#dc2626;background:#fef2f2}
     .vph-box img.vph-preview{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none}
     .vph-box.filled img.vph-preview{display:block}
     .vph-box.filled .vph-placeholder{display:none}
@@ -305,6 +309,7 @@
             </div>
             <label class="vph-box {{ 'filled' if cur else '' }}"
                    id="box_{{ img_type }}"
+                   data-prefilled="{{ '1' if cur else '' }}"
                    onclick="event.preventDefault();document.getElementById('{{ field }}').click()">
               <!-- Preview -->
               <img class="vph-preview" id="preview_{{ img_type }}"
@@ -461,8 +466,17 @@
       <div class="card-header"><div class="card-title"><i class="fas fa-align-left" style="margin-right:8px;color:var(--gold-accent)"></i>Description & Options</div></div>
       <div class="card-body">
         <div class="form-group full mb-16">
-          <label>Description</label>
-          <textarea name="description" placeholder="Vehicle condition, history, features...">{{ vehicle['description'] if vehicle else '' }}</textarea>
+          <label style="display:flex;align-items:center;justify-content:space-between">
+            <span>Description</span>
+            <button type="button" id="aiDescBtn" onclick="generateAIDescription()"
+                    style="display:inline-flex;align-items:center;gap:6px;padding:5px 12px;
+                           background:linear-gradient(135deg,#0f2444,#1e3a5f);color:#fff;
+                           border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">
+              <i class="fas fa-magic" style="color:gold"></i> <span id="aiDescBtnText">Generate with AI</span>
+            </button>
+          </label>
+          <textarea name="description" id="descriptionField" placeholder="Vehicle condition, history, features...">{{ vehicle['description'] if vehicle else '' }}</textarea>
+          <div id="aiDescError" style="display:none;color:#dc2626;font-size:11px;margin-top:4px"></div>
         </div>
         <div style="display:flex;gap:24px">
           <label class="form-check">
@@ -474,6 +488,31 @@
             Featured Listing
           </label>
         </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════ -->
+    <!-- AI Price Estimation — placed right before submit so the dealer      -->
+    <!-- reviews/uses the suggestion as the very last step before saving.    -->
+    <!-- ══════════════════════════════════════════════════════════════════ -->
+    <div class="card mb-24" style="border:1.5px solid var(--gold-accent,#f59e0b);">
+      <div class="card-header">
+        <div class="card-title">
+          <i class="fas fa-calculator" style="margin-right:8px;color:var(--gold-accent,#f59e0b)"></i>
+          AI Price Estimation
+        </div>
+        <span style="font-size:12px;color:var(--text-secondary,#6b7280)">Uses the Asking Price above as reference, plus condition &amp; photos</span>
+      </div>
+      <div class="card-body" style="padding:24px">
+        <p style="margin:0 0 16px;font-size:13px;color:var(--text-muted,#6b7280);line-height:1.6;">
+          Fill in the <b>Asking Price</b> field above with what a similar car in top condition
+          currently sells for, then click below — the AI will adjust it down for this vehicle's
+          age, mileage, condition details and photos, and suggest a fair price.
+        </p>
+        <button type="button" id="estimatePriceBtn" class="btn btn-primary btn-lg" onclick="estimateVehiclePrice()">
+          <i class="fas fa-calculator" style="margin-right:6px;"></i>Estimate Price (AI)
+        </button>
+        <div id="priceEstimateResult" style="display:none;margin-top:18px;padding:18px 20px;border-radius:10px;border:1px solid #e5e7eb;background:#f9fafb;"></div>
       </div>
     </div>
 
@@ -613,7 +652,14 @@ function validatePlateNumber(input, errEl) {
 const VEHICLE_ID = {{ vehicle['id'] if vehicle and vehicle.get('id') else 'null' }};
 let vphGalleryFiles = [];
 
-/* ── Named slot preview ─────────────────────────────────────────────────── */
+/* ── Named slot preview + live AI angle verification ─────────────────────── */
+const SLOT_LABELS_JS = {
+  front: 'Front View', rear: 'Rear / Tail View',
+  right_side: 'Right Side View', left_side: 'Left Side View',
+  engine: 'Engine Bay', boot: 'Boot / Trunk', interior: 'Interior',
+};
+let vphSlotValid = {};   // imgType -> true/false once checked
+
 function vphPreviewSlot(input, imgType) {
   const file = input.files[0];
   if (!file) return;
@@ -621,12 +667,84 @@ function vphPreviewSlot(input, imgType) {
   const preview = document.getElementById('preview_' + imgType);
   const reader  = new FileReader();
   reader.onload = e => {
-    preview.src          = e.target.result;
+    preview.src           = e.target.result;
     preview.style.display = 'block';
     box.classList.add('filled');
   };
   reader.readAsDataURL(file);
+
+  vphSlotValid[imgType] = false;   // pending until AI check returns
+  vphSetSlotStatus(imgType, 'checking', 'Checking photo…');
+
+  const fd = new FormData();
+  fd.append('slot', imgType);
+  fd.append('file', file);
+
+  fetch('/dealer/inventory/api/classify-photo', { method: 'POST', body: fd })
+    .then(res => res.json().then(data => ({ status: res.status, data })))
+    .then(({ data }) => {
+      if (data.ok) {
+        vphSlotValid[imgType] = true;
+        vphSetSlotStatus(imgType, 'ok', '');
+      } else {
+        vphSlotValid[imgType] = false;
+        vphSetSlotStatus(imgType, 'error', data.error || 'Photo verify nahi ho payi.');
+      }
+    })
+    .catch(() => {
+      vphSlotValid[imgType] = false;
+      vphSetSlotStatus(imgType, 'error', 'Network error — dobara try karein.');
+    });
 }
+
+function vphSetSlotStatus(imgType, state, message) {
+  const box = document.getElementById('box_' + imgType);
+  let errEl = document.getElementById('slotErr_' + imgType);
+  if (!errEl) {
+    errEl = document.createElement('div');
+    errEl.id = 'slotErr_' + imgType;
+    errEl.style = 'font-size:12px;font-weight:600;margin-top:6px;line-height:1.4';
+    box.parentNode.appendChild(errEl);
+  }
+  box.classList.remove('vph-checking', 'vph-invalid');
+  if (state === 'checking') {
+    box.classList.add('vph-checking');
+    errEl.style.color = '#6b7280';
+    errEl.textContent = message;
+  } else if (state === 'error') {
+    box.classList.add('vph-invalid');
+    errEl.style.color = '#dc2626';
+    errEl.textContent = message;
+  } else {
+    errEl.textContent = '';
+  }
+}
+
+/* Block form submit until every filled slot has passed AI verification */
+function vphAllSlotsValid() {
+  const pendingOrFailed = Object.keys(SLOT_LABELS_JS).filter(t => !vphSlotValid[t]);
+  return pendingOrFailed;
+}
+
+/* Edit mode: slots that already have a saved photo start out valid — they
+   were verified when originally uploaded, no need to re-check unless the
+   dealer picks a new file for that slot (vphPreviewSlot re-marks it). */
+document.querySelectorAll('.vph-box[data-prefilled="1"]').forEach(function (box) {
+  var imgType = box.id.replace('box_', '');
+  vphSlotValid[imgType] = true;
+});
+
+document.getElementById('vehicleForm').addEventListener('submit', function (e) {
+  const bad = vphAllSlotsValid();
+  if (bad.length > 0) {
+    e.preventDefault();
+    const names = bad.map(t => SLOT_LABELS_JS[t] || t).join(', ');
+    alert('Please fix / wait for these vehicle photos before submitting: ' + names +
+          '\n\nIf a photo is still being checked, wait a moment and try again.');
+    const firstBad = document.getElementById('box_' + bad[0]);
+    if (firstBad) firstBad.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+});
 
 /* ── Gallery validation + preview ───────────────────────────────────────── */
 const MAX_GALLERY = 10;
@@ -902,5 +1020,217 @@ function handleDrop(e)             { vphHandleDrop(e); }
 function handleExtraDrop(e)        { vphHandleDrop(e); }
 function uploadGalleryImages()     { vphUploadGallery(); }
 function deleteGalleryImage(v,f,b) { vphDeleteSaved(v,f,b); }
+
+/* ── Major Issues: NA / None mutual-exclusivity fix ───────────────────────
+   Bug: selecting "NA" (or "None") did not clear the other checkboxes, so a
+   vehicle could end up with e.g. "Engine, Gearbox, NA" checked together —
+   which makes no sense ("NA" means "not applicable / no data" and should be
+   exclusive of every other option, same for "None").
+   Rule:
+     - Checking "NA" or "None"  → uncheck every other option (they are
+       mutually exclusive placeholders).
+     - Checking any real issue (Engine / Gearbox / AC / Suspension) →
+       uncheck "NA" and "None" (a real issue can't coexist with "no issue").
+------------------------------------------------------------------------- */
+(function () {
+  var wrap = document.getElementById('dealerMajorIssues');
+  if (!wrap) return;
+  var EXCLUSIVE = ['None', 'NA'];
+  var boxes = Array.prototype.slice.call(wrap.querySelectorAll('input[name="major_issues"]'));
+
+  function onChange(changed) {
+    if (!changed.checked) return;
+
+    if (EXCLUSIVE.indexOf(changed.value) !== -1) {
+      // An exclusive option (None/NA) was checked → clear every other box
+      boxes.forEach(function (b) {
+        if (b !== changed) b.checked = false;
+      });
+    } else {
+      // A real issue was checked → clear the exclusive options only
+      boxes.forEach(function (b) {
+        if (EXCLUSIVE.indexOf(b.value) !== -1) b.checked = false;
+      });
+    }
+  }
+
+  boxes.forEach(function (box) {
+    box.addEventListener('change', function () { onChange(box); });
+  });
+
+  // Normalise state already present on page load (e.g. edit mode with stale
+  // combinations saved before this fix existed).
+  var checkedExclusive = boxes.find(function (b) { return b.checked && EXCLUSIVE.indexOf(b.value) !== -1; });
+  if (checkedExclusive) {
+    boxes.forEach(function (b) {
+      if (b !== checkedExclusive) b.checked = false;
+    });
+  }
+})();
+
+/* Require at least one Major Issues checkbox before submitting the form */
+(function () {
+  var form = document.querySelector('form');
+  if (!form) return;
+  form.addEventListener('submit', function (e) {
+    var wrap = document.getElementById('dealerMajorIssues');
+    if (!wrap) return;
+    var anyChecked = wrap.querySelector('input[name="major_issues"]:checked');
+    if (!anyChecked) {
+      e.preventDefault();
+      alert('Please select at least one option under Major Issues (choose "None" if there are no issues, or "NA" if not applicable).');
+      wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  });
+})();
+
+/* ── AI-generated Vehicle Description ───────────────────────────────────── */
+async function generateAIDescription() {
+  var btn = document.getElementById('aiDescBtn');
+  var btnText = document.getElementById('aiDescBtnText');
+  var errBox = document.getElementById('aiDescError');
+  var field = document.getElementById('descriptionField');
+  errBox.style.display = 'none';
+
+  var payload = {
+    make: document.querySelector('[name="make"]').value,
+    model: document.querySelector('[name="model"]').value,
+    variant: document.querySelector('[name="variant"]').value,
+    year: document.querySelector('[name="year"]').value,
+    color: document.querySelector('[name="color"]').value,
+    fuel_type: document.querySelector('[name="fuel_type"]').value,
+    transmission: document.querySelector('[name="transmission"]').value,
+    mileage: document.querySelector('[name="mileage"]').value,
+    engine_cc: document.querySelector('[name="engine_cc"]').value,
+    price: document.querySelector('[name="price"]').value,
+    condition: document.querySelector('[name="condition"]').value,
+    accident_history: (document.querySelector('[name="accident_history"]') || {}).value || '',
+    keys_available: (document.querySelector('[name="keys_available"]') || {}).value || '',
+    major_issues: Array.from(document.querySelectorAll('input[name="major_issues"]:checked')).map(el => el.value).join(', ')
+  };
+
+  if (!payload.make || !payload.model) {
+    errBox.textContent = 'Please fill Make and Model first.';
+    errBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btnText.textContent = 'Generating…';
+
+  try {
+    const res = await fetch('/dealer/vehicles/ai-description', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Could not generate description.');
+    }
+    field.value = data.description;
+  } catch (err) {
+    errBox.textContent = err.message || 'Something went wrong. Please try again.';
+    errBox.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btnText.textContent = 'Generate with AI';
+  }
+}
+
+/* ── AI-assisted Price Estimation ─────────────────────────────────────────
+   Combines make/model basics + Vehicle Condition Details + the 7 mandatory
+   photos (if already selected) into a suggested price. Purely assistive —
+   dealer reviews the breakdown and decides whether to use it. */
+async function estimateVehiclePrice() {
+  var btn = document.getElementById('estimatePriceBtn');
+  var resultBox = document.getElementById('priceEstimateResult');
+  var askingPriceInput = document.getElementById('askingPriceInput');
+
+  var year = (document.querySelector('[name="year"]') || {}).value || '';
+  var mileage = (document.querySelector('[name="mileage"]') || {}).value || '0';
+  var referencePrice = askingPriceInput ? askingPriceInput.value : '';
+
+  if (!year) {
+    alert('Please fill Year first.');
+    return;
+  }
+  if (!referencePrice || Number(referencePrice) <= 0) {
+    alert('Please enter the Asking Price above first — what a similar car in top condition currently sells for. The estimate adjusts down from this number.');
+    askingPriceInput && askingPriceInput.focus();
+    askingPriceInput && askingPriceInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
+  var fd = new FormData();
+  fd.append('year', year);
+  fd.append('mileage', mileage);
+  fd.append('reference_price', referencePrice);
+
+  ['accident_history', 'loan_status', 'rc_service_records', 'keys_available', 'body_panel_status'].forEach(function (name) {
+    var el = document.querySelector('[name="' + name + '"]');
+    if (el) fd.append(name, el.value || 'NA');
+  });
+  document.querySelectorAll('input[name="major_issues"]:checked').forEach(function (el) {
+    fd.append('major_issues', el.value);
+  });
+
+  // Reuse whatever photos the dealer has already picked for the 7 mandatory
+  // slots — entirely optional, the estimate still runs from details alone.
+  ['img_front', 'img_rear', 'img_right_side', 'img_left_side', 'img_engine', 'img_boot', 'img_interior'].forEach(function (id) {
+    var input = document.getElementById(id);
+    if (input && input.files && input.files[0]) {
+      fd.append(id, input.files[0]);
+    }
+  });
+
+  var origHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin" style="margin-right:6px;"></i>Estimating…';
+  resultBox.style.display = 'none';
+
+  try {
+    const res = await fetch('/dealer/inventory/api/estimate-price', { method: 'POST', body: fd });
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || 'Could not estimate price right now.');
+    }
+
+    var b = data.breakdown;
+    var issuesHtml = (b.condition_issues && b.condition_issues.length)
+      ? b.condition_issues.map(function (i) { return '<li>' + i.name + ' <small>(' + i.severity + ')</small></li>'; }).join('')
+      : '<li>No condition issues flagged</li>';
+
+    var imgLine = b.image_condition && b.image_condition.available
+      ? 'Visual photo check: ' + b.image_condition.photos_scanned + ' photo(s) scanned — ' + b.image_deduction_pct + '% adjustment'
+      : 'Visual photo check: not available (' + (b.image_condition ? b.image_condition.reason : 'no photos') + ')';
+
+    resultBox.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;">' +
+        '<div>' +
+          '<div style="font-size:13px;color:var(--text-muted,#6b7280);">Suggested Price</div>' +
+          '<div style="font-size:24px;font-weight:800;color:var(--gold-accent,#b45309);">₹' + Number(data.estimated_price).toLocaleString('en-IN') + '</div>' +
+          '<div style="font-size:12px;color:var(--text-muted,#6b7280);">Likely range: ₹' + Number(data.estimated_range.low).toLocaleString('en-IN') + ' – ₹' + Number(data.estimated_range.high).toLocaleString('en-IN') + '</div>' +
+        '</div>' +
+        '<button type="button" class="btn btn-primary" onclick="document.getElementById(\'askingPriceInput\').value=' + data.estimated_price + '">Use This Price</button>' +
+      '</div>' +
+      '<hr style="margin:14px 0;border-color:#e5e7eb;">' +
+      '<div style="font-size:13px;color:#374151;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;">' +
+        '<div>Vehicle age: <b>' + b.vehicle_age_years + ' yrs</b> → -' + b.age_depreciation_pct + '%</div>' +
+        '<div>Mileage adjustment: <b>' + b.mileage_adjustment_pct + '%</b><br><small style="color:#6b7280;">' + b.mileage_note + '</small></div>' +
+        '<div>Condition deduction: <b>-' + b.condition_deduction_pct + '%</b><ul style="margin:4px 0 0 16px;padding:0;">' + issuesHtml + '</ul></div>' +
+        '<div>' + imgLine + '</div>' +
+      '</div>' +
+      '<div style="margin-top:12px;font-size:12px;color:#6b7280;font-style:italic;">' + data.disclaimer + '</div>';
+    resultBox.style.display = 'block';
+  } catch (err) {
+    resultBox.innerHTML = '<div style="color:#dc2626;">' + (err.message || 'Something went wrong. Please try again.') + '</div>';
+    resultBox.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = origHtml;
+  }
+}
 </script>
 {% endblock %}
