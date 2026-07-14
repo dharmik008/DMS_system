@@ -5,6 +5,7 @@
 {% block content %}
 <div style="max-width:900px">
   <form method="POST" id="dealForm" onsubmit="return validateDealForm()">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="grid-2 mb-24">
       <!-- Left: Deal Details -->
       <div style="display:flex;flex-direction:column;gap:24px">
@@ -111,6 +112,74 @@
           <div class="card-body">
             <div class="form-group">
               <textarea name="notes" placeholder="Deal notes, special conditions...">{{ deal['notes'] if deal else '' }}</textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════ -->
+        <!-- FINANCIAL SUMMARY (Revenue & Profit Management) -->
+        <!-- ══════════════════════════════════════════════ -->
+        <div class="card">
+          <div class="card-header"><div class="card-title"><i class="fas fa-file-invoice-dollar" style="margin-right:8px;color:var(--gold-accent)"></i>Financial Summary</div></div>
+          <div class="card-body">
+            <div class="form-grid">
+              <div class="form-group">
+                <label style="color:#dc2626">Purchase Price (₹)</label>
+                <input type="number" name="purchase_price" id="fin_purchase_price" min="0" step="0.01"
+                       value="{{ deal['purchase_price'] if deal and deal['purchase_price'] else '' }}"
+                       placeholder="0" oninput="recalcFinancials()" style="border-color:#fca5a5;color:#dc2626;font-weight:600">
+              </div>
+              <div class="form-group">
+                <label style="color:#dc2626">Transportation Cost (₹)</label>
+                <input type="number" name="transportation_cost" id="fin_transportation_cost" min="0" step="0.01"
+                       value="{{ deal['transportation_cost'] if deal and deal['transportation_cost'] else '' }}"
+                       placeholder="0" oninput="recalcFinancials()" style="border-color:#fca5a5;color:#dc2626;font-weight:600">
+              </div>
+              <div class="form-group">
+                <label style="color:#dc2626">Repair Cost (₹)</label>
+                <input type="number" name="repair_cost" id="fin_repair_cost" min="0" step="0.01"
+                       value="{{ deal['repair_cost'] if deal and deal['repair_cost'] else '' }}"
+                       placeholder="0" oninput="recalcFinancials()" style="border-color:#fca5a5;color:#dc2626;font-weight:600">
+              </div>
+              <div class="form-group">
+                <label style="color:#dc2626">Registration / Inspection Cost (₹)</label>
+                <input type="number" name="registration_cost" id="fin_registration_cost" min="0" step="0.01"
+                       value="{{ deal['registration_cost'] if deal and deal['registration_cost'] else '' }}"
+                       placeholder="0" oninput="recalcFinancials()" style="border-color:#fca5a5;color:#dc2626;font-weight:600">
+              </div>
+              <div class="form-group">
+                <label style="color:#dc2626">Marketing Cost (₹)</label>
+                <input type="number" name="marketing_cost" id="fin_marketing_cost" min="0" step="0.01"
+                       value="{{ deal['marketing_cost'] if deal and deal['marketing_cost'] else '' }}"
+                       placeholder="0" oninput="recalcFinancials()" style="border-color:#fca5a5;color:#dc2626;font-weight:600">
+              </div>
+              <div class="form-group">
+                <label style="color:#dc2626;font-weight:700">Total Cost (Auto)</label>
+                <input type="text" id="fin_total_cost_disp" readonly value="₹0"
+                       style="border-color:#dc2626;color:#dc2626;font-weight:800;background:#fef2f2">
+              </div>
+              <div class="form-group">
+                <label style="color:#2563eb;font-weight:700">Selling Price (₹)</label>
+                <input type="text" id="fin_selling_price_disp" readonly value="₹0"
+                       style="border-color:#93c5fd;color:#2563eb;font-weight:800;background:#eff6ff">
+                <small style="font-size:11px;color:var(--text-muted)">= Final Price above (Gross Revenue)</small>
+              </div>
+              <div class="form-group">
+                <label style="color:#16a34a;font-weight:700">Gross Profit (Auto)</label>
+                <input type="text" id="fin_gross_profit_disp" readonly value="₹0"
+                       style="border-color:#86efac;color:#16a34a;font-weight:800;background:#f0fdf4">
+              </div>
+              <div class="form-group">
+                <label style="color:#dc2626">Other Selling Expenses (₹)</label>
+                <input type="number" name="other_expenses" id="fin_other_expenses" min="0" step="0.01"
+                       value="{{ deal['other_expenses'] if deal and deal['other_expenses'] else '' }}"
+                       placeholder="0" oninput="recalcFinancials()" style="border-color:#fca5a5;color:#dc2626;font-weight:600">
+              </div>
+              <div class="form-group full">
+                <label style="color:#16a34a;font-weight:800;font-size:14px">Net Profit (Auto)</label>
+                <input type="text" id="fin_net_profit_disp" readonly value="₹0"
+                       style="border-color:#16a34a;color:#16a34a;font-weight:900;font-size:18px;background:#f0fdf4">
+              </div>
             </div>
           </div>
         </div>
@@ -223,6 +292,41 @@ function updateGST() {
   } else {
     preview.style.display = 'none';
   }
+  recalcFinancials();
+}
+
+// ── Financial Summary — auto Total Cost / Gross Profit / Net Profit ──────────
+// Mirrors compute_deal_financials() in models.py exactly, so what the user
+// sees while typing always matches what gets saved server-side.
+function recalcFinancials() {
+  function num(id) { return parseFloat((document.getElementById(id) || {}).value || 0) || 0; }
+  function fmt(n) { return '₹' + Math.round(n).toLocaleString('en-IN'); }
+
+  const purchase      = num('fin_purchase_price');
+  const transportation = num('fin_transportation_cost');
+  const repair          = num('fin_repair_cost');
+  const registration     = num('fin_registration_cost');
+  const marketing          = num('fin_marketing_cost');
+  const otherExpenses        = num('fin_other_expenses');
+  const sellingPrice           = parseFloat((document.getElementById('final_price') || {}).value || 0) || 0;
+
+  const totalCost   = purchase + transportation + repair + registration + marketing;
+  const grossProfit = sellingPrice - totalCost;
+  const netProfit    = grossProfit - otherExpenses;
+
+  const totalCostEl   = document.getElementById('fin_total_cost_disp');
+  const sellingEl      = document.getElementById('fin_selling_price_disp');
+  const grossProfitEl   = document.getElementById('fin_gross_profit_disp');
+  const netProfitEl      = document.getElementById('fin_net_profit_disp');
+
+  if (totalCostEl)  totalCostEl.value  = fmt(totalCost);
+  if (sellingEl)     sellingEl.value    = fmt(sellingPrice);
+  if (grossProfitEl)  grossProfitEl.value = fmt(grossProfit);
+  if (netProfitEl)     netProfitEl.value  = fmt(netProfit);
+
+  // Colour Gross/Net Profit red if the deal is actually a loss
+  if (grossProfitEl) grossProfitEl.style.color = grossProfit < 0 ? '#dc2626' : '#16a34a';
+  if (netProfitEl)    netProfitEl.style.color    = netProfit < 0 ? '#dc2626' : '#16a34a';
 }
 
 function fillEMIValues() {
@@ -245,6 +349,7 @@ function fillEMIValues() {
 // Init
 toggleLoanFields();
 updateGST();
+recalcFinancials();
 // Auto-fetch vehicle info on page load (edit mode)
 document.addEventListener('DOMContentLoaded', function() {
   var sel = document.getElementById('vehicle_select');
