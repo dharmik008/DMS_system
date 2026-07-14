@@ -11,8 +11,11 @@
 <div class="card">
   <div class="card-header">
     <span class="card-title">All Inquiries</span>
-    <input type="text" placeholder="Search name, vehicle, dealer..." oninput="filterTable(this,'inqTable')"
-      style="padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-1);font-size:13px;min-width:220px;">
+    <span style="position:relative;display:inline-block;">
+      <input type="text" id="inqSearchInput" placeholder="Search name, vehicle, dealer..." oninput="filterTable(this,'inqTable')"
+        style="padding:6px 32px 6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-1);font-size:13px;min-width:220px;">
+      <button type="button" id="inqSearchMic" class="voice-search-btn" title="Search by voice"><i class="fas fa-microphone"></i></button>
+    </span>
   </div>
   <div style="overflow-x:auto;">
     <table class="table" id="inqTable">
@@ -77,5 +80,9 @@ function filterTable(inp, tableId) {
     row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
 }
+</script>
+<script src="{{ url_for('static', filename='js/voice-search.js') }}"></script>
+<script>
+  attachVoiceSearch('inqSearchInput', 'inqSearchMic');
 </script>
 {% endblock %}
