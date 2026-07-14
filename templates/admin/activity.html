@@ -168,7 +168,10 @@
           <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
         </svg>
         <input type="text" name="search" value="{{ search }}" placeholder="Search user, action, IP…"
-               class="filter-input" style="padding-left:34px;width:100%;">
+               class="filter-input" id="activitySearchInput" style="padding-left:34px;padding-right:32px;width:100%;">
+        <button type="button" id="activitySearchMic" class="voice-search-btn" title="Search by voice">
+          <i class="fas fa-microphone"></i>
+        </button>
       </div>
 
       <select name="module" class="filter-select" onchange="this.form.submit()">
@@ -749,5 +752,9 @@ document.getElementById('filterForm').addEventListener('submit', function(e) {
 
   setInterval(poll, 30000);
 })();
+</script>
+<script src="{{ url_for('static', filename='js/voice-search.js') }}"></script>
+<script>
+  attachVoiceSearch('activitySearchInput', 'activitySearchMic', { autoSubmitForm: 'filterForm' });
 </script>
 {% endblock %}
