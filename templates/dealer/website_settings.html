@@ -56,6 +56,7 @@
     {% endwith %}
 
     <form method="POST" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
       <!-- Website Identity -->
       <div class="ws-card">
@@ -238,7 +239,10 @@ const DEALER_NAME_SLUG = {{ dealer.name | lower | replace(' ', '') | tojson }};
 
 function buildFullUrl(slug) {
   if (!slug) return '';
-  const base = APP_BASE_URL || window.location.origin;
+  // Always prefer the live browser origin (whatever domain/IP is actually
+  // open right now) over the static APP_BASE_URL config, so the preview
+  // and copied link match the real live site instead of a stale value.
+  const base = window.location.origin || APP_BASE_URL;
   return base.replace(/\/$/, '') + '/caryanams/' + DEALER_NAME_SLUG + '/' + slug;
 }
 
