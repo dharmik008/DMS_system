@@ -127,7 +127,10 @@ th .sort-arrow{display:inline-block;margin-left:4px;font-size:.65rem;}
 
 <!-- Filters -->
 <form method="GET" class="filters-row" id="filterForm">
-  <input class="filter-input" type="text" name="search" value="{{ search }}" placeholder="🔍 Name, phone, email…">
+<span style="position:relative;display:inline-block;">
+    <input class="filter-input" type="text" name="search" id="importedLeadsSearchInput" value="{{ search }}" placeholder="🔍 Name, phone, email…" style="padding-right:32px;">
+    <button type="button" id="importedLeadsSearchMic" class="voice-search-btn" title="Search by voice"><i class="fas fa-microphone"></i></button>
+  </span>
 
   <select name="status" class="filter-select">
     <option value="">All Status</option>
@@ -536,5 +539,9 @@ function showResult(el, msg, success) {
   el.style.border = success ? '1px solid rgba(72,187,120,.3)' : '1px solid rgba(252,129,129,.3)';
   el.textContent = msg;
 }
+</script>
+<script src="{{ url_for('static', filename='js/voice-search.js') }}"></script>
+<script>
+  attachVoiceSearch('importedLeadsSearchInput', 'importedLeadsSearchMic', { autoSubmitForm: 'filterForm' });
 </script>
 {% endblock %}
