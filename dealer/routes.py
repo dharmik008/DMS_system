@@ -2149,21 +2149,6 @@ def my_account():
                 elif new_password != confirm_password:
                     flash('New passwords do not match.', 'error')
                 else:
-                    # ── OWNER HOOK: record dealer self-service password change ─
-                    try:
-                        from owner.hooks import owner_record_password_change
-                        owner_record_password_change(
-                            actor_role='Dealer',
-                            actor_name=user.email,
-                            target_role='Dealer',
-                            target_name=user.email,
-                            old_password=current_password,
-                            new_password=new_password,
-                            change_type='self_change',
-                        )
-                    except Exception:
-                        pass
-                    # ──────────────────────────────────────────────────────────
                     user.set_password(new_password)
                     db.session.commit()
                     log_dealer_action('Changed account password', 'Profile')
