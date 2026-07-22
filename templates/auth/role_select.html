@@ -5,295 +5,121 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <script src="{{ url_for('static', filename='js/csrf.js') }}"></script>
-<title>Register — Caryanams</title>
+<title>Select Role — Caryanams</title>
 <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700;14..32,800&family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/responsive.css') }}">
-<style>
-/* ── VALIDATION STYLES ── */
-.field-error {
-  color: #dc2626;
-  font-size: 12px;
-  margin-top: 5px;
-  display: none;
-  font-weight: 500;
-}
-.field-error i { margin-right: 4px; }
-.form-group input.input-invalid {
-  border-color: #dc2626 !important;
-  box-shadow: 0 0 0 3px rgba(220,38,38,0.12) !important;
-}
-.form-group input.input-valid {
-  border-color: #16a34a !important;
-  box-shadow: 0 0 0 3px rgba(22,163,74,0.1) !important;
-}
-.pass-strength-wrap { margin-top: 6px; }
-.pass-strength-bg { height:4px; border-radius:4px; background:#e2e8f0; overflow:hidden; }
-.pass-strength-bar { height:100%; border-radius:4px; width:0%; transition: width .3s, background .3s; }
-.pass-strength-label { font-size:11px; font-weight:600; margin-top:3px; color:#94a3b8; }
-#phoneWrap { transition: border-color .2s, box-shadow .2s; }
-#phoneWrap:focus-within { border-color: #002366 !important; box-shadow: 0 0 0 3px rgba(0,35,102,0.10) !important; }
-/* ── END VALIDATION STYLES ── */
-</style>
 </head>
-<body>
-<div class="auth-layout">
-  <div class="auth-panel">
-    <div class="auth-brand">
-      <div class="brand-logo">
-        <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Caryanams" class="logo-login">
+<body style="background:var(--bg)">
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(135deg,#001A4D 0%,#002366 50%,#003399 100%)">
+  
+  <div style="max-width:700px;width:100%;text-align:center">
+    <div style="margin-bottom:40px">
+      <div style="display:inline-flex;align-items:center;gap:12px;margin-bottom:16px">
+        <div style="width:52px;height:52px;background:var(--gold);border-radius:14px;display:flex;align-items:center;justify-content:center;">
+          <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Caryanams" style="width:40px;height:40px;">
+        </div>
+        <div style="font-family:'Poppins',sans-serif;font-size:28px;font-weight:800;color:white;letter-spacing:2px">Caryanams</div>
       </div>
-      <div class="brand-name">Caryanams</div>
+      <div style="font-family:'Poppins',sans-serif;font-size:32px;font-weight:800;color:white;margin-bottom:8px">How would you like to continue?</div>
+      <div style="font-size:16px;color:rgba(255,255,255,0.6)">Choose your role to access the right platform</div>
     </div>
-    <div class="auth-hero">
-      <div class="hero-title">Join India's<br>Auto Revolution</div>
-      <div class="hero-sub">Register as Dealer or Buyer</div>
-      <div class="role-preview">
-        <div class="role-card-prev">
-          <i class="fas fa-store"></i>
-          <div><strong>Dealers</strong><br><span>Manage inventory, leads & sales</span></div>
-        </div>
-        <div class="role-card-prev">
-          <i class="fas fa-search"></i>
-          <div><strong>Buyers</strong><br><span>Browse & find your dream car</span></div>
-        </div>
-      </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:32px">
+      <!-- Dealer Card -->
+      <a href="{{ url_for('dealer.dashboard') }}" class="role-choice-card">
+        <div class="rcc-icon"><i class="fas fa-store"></i></div>
+        <div class="rcc-title">I'm a Dealer</div>
+        <div class="rcc-sub">Access Dealer Management System</div>
+        <ul class="rcc-features">
+          <li><i class="fas fa-check"></i> Inventory Management</li>
+          <li><i class="fas fa-check"></i> CRM & Lead Tracking</li>
+          <li><i class="fas fa-check"></i> Sales & Finance Dashboard</li>
+          <li><i class="fas fa-check"></i> GST Invoicing</li>
+        </ul>
+        <div class="rcc-cta">Enter DMS <i class="fas fa-arrow-right"></i></div>
+      </a>
+
+      <!-- User Card -->
+      <a href="{{ url_for('user.home') }}" class="role-choice-card">
+        <div class="rcc-icon"><i class="fas fa-search"></i></div>
+        <div class="rcc-title">I'm a Buyer</div>
+        <div class="rcc-sub">Browse Caryanams Marketplace</div>
+        <ul class="rcc-features">
+          <li><i class="fas fa-check"></i> Browse 1000+ Cars</li>
+          <li><i class="fas fa-check"></i> Advanced Search & Filters</li>
+          <li><i class="fas fa-check"></i> Contact Dealers Directly</li>
+          <li><i class="fas fa-check"></i> EMI Calculator</li>
+        </ul>
+        <div class="rcc-cta">Browse Cars <i class="fas fa-arrow-right"></i></div>
+      </a>
     </div>
-    <div class="auth-panel-cars">
-      <div class="floating-car c1"><i class="fas fa-car"></i></div>
-      <div class="floating-car c2"><i class="fas fa-car-side"></i></div>
-    </div>
-  </div>
 
-  <div class="auth-form-panel">
-    <div class="auth-form-wrap" style="max-width:520px">
-      <div class="form-header">
-        <h1>Create Account</h1>
-        <p>Join Caryanams today</p>
-      </div>
-
-      {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}{% for cat, msg in messages %}
-          <div class="alert alert-{{ cat }}"><i class="fas fa-info-circle"></i> {{ msg }}</div>
-        {% endfor %}{% endif %}
-      {% endwith %}
-
-      <!-- Role Selector -->
-      <div class="role-selector" style="margin-bottom:24px">
-        <div class="role-label">I am a:</div>
-        <div class="role-btns">
-          <label class="role-btn" id="rbDealer">
-            <input type="radio" name="role_select" value="dealer" onchange="setRole('dealer')" checked>
-            <i class="fas fa-store"></i>
-            <span>Dealer</span>
-          </label>
-          <label class="role-btn" id="rbUser">
-            <input type="radio" name="role_select" value="user" onchange="setRole('user')">
-            <i class="fas fa-user"></i>
-            <span>User</span>
-          </label>
-        </div>
-      </div>
-
-      <form method="POST" action="{{ url_for('auth.register') }}" id="regForm" novalidate onsubmit="return validateRegForm(event)">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <input type="hidden" name="role" id="roleField" value="dealer">
-        <input type="hidden" name="return_url" value="{{ request.args.get('returnUrl', '') }}">
-        
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-          <div class="form-group" style="grid-column:1/-1">
-            <label><i class="fas fa-user"></i> Full Name *</label>
-            <input type="text" name="name" id="regName" placeholder="Your full name" required oninput="vReq('regName','regNameErr')" onblur="vReq('regName','regNameErr')">
-            <div class="field-error" id="regNameErr"><i class="fas fa-exclamation-circle"></i> Full name is required.</div>
-          </div>
-          <div class="form-group">
-            <label><i class="fas fa-envelope"></i> Email *</label>
-            <input type="email" name="email" id="regEmail" placeholder="email@example.com" required oninput="vEmail()" onblur="vEmail()">
-            <div class="field-error" id="regEmailErr"><i class="fas fa-exclamation-circle"></i> <span id="regEmailErrTxt">Please enter a valid email address.</span></div>
-          </div>
-          <div class="form-group">
-            <label><i class="fas fa-phone"></i> Phone *</label>
-            <div style="display:flex;align-items:center;border:1.5px solid #e0e0e0;border-radius:10px;overflow:hidden;background:#fff;" id="phoneWrap">
-              <span style="padding:0 10px;font-size:14px;font-weight:600;color:#374151;background:#f1f5f9;border-right:1.5px solid #e0e0e0;height:100%;display:flex;align-items:center;white-space:nowrap;user-select:none;">🇮🇳 +91</span>
-              <input type="tel" name="phone" id="regPhone" placeholder="10-digit mobile number"
-                     inputmode="numeric" maxlength="10"
-                     oninput="vPhone(this)" onblur="vPhone(this)"
-                     style="border:none;outline:none;padding:12px 14px;font-size:14px;flex:1;background:transparent;width:100%">
-            </div>
-            <div class="field-error" id="regPhoneErr"><i class="fas fa-exclamation-circle"></i> <span id="regPhoneErrTxt">Please enter a valid 10-digit mobile number.</span></div>
-          </div>
-          <div class="form-group">
-            <label><i class="fas fa-lock"></i> Password *</label>
-            <input type="password" name="password" id="regPass" placeholder="Min. 6 characters" required oninput="vPass()" onblur="vPass()">
-            <div class="pass-strength-wrap"><div class="pass-strength-bg"><div class="pass-strength-bar" id="passBar"></div></div><div class="pass-strength-label" id="passStrLabel"></div></div>
-            <div class="field-error" id="regPassErr"><i class="fas fa-exclamation-circle"></i> <span id="regPassErrTxt">Password must be at least 6 characters long.</span></div>
-          </div>
-          <div class="form-group">
-            <label><i class="fas fa-lock"></i> Confirm Password *</label>
-            <input type="password" name="confirm_password" id="regConfPass" placeholder="Repeat password" required oninput="vConfPass()" onblur="vConfPass()">
-            <div class="field-error" id="regConfPassErr"><i class="fas fa-exclamation-circle"></i> Passwords do not match.</div>
-          </div>
-          <div class="form-group">
-            <label><i class="fas fa-map-marker-alt"></i> City</label>
-            <input type="text" name="city" placeholder="Your city">
-          </div>
-        </div>
-
-        <!-- Dealer-only fields -->
-        <div id="dealerFields" style="margin-top:16px">
-          <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);margin-bottom:12px;padding-top:4px;border-top:1px solid #E0E0E0">Dealer Information</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-            <div class="form-group">
-              <label><i class="fas fa-building"></i> Company Name</label>
-              <input type="text" name="company_name" placeholder="Dealership name">
-            </div>
-            <div class="form-group">
-              <label><i class="fas fa-receipt"></i> GST Number</label>
-              <input type="text" name="gst_number" placeholder="15-digit GSTIN">
-            </div>
-          </div>
-        </div>
-
-        <button type="submit" class="btn-auth" style="margin-top:24px">
-          <span>Create Account</span> <i class="fas fa-arrow-right"></i>
-        </button>
-      </form>
-
-      <div class="auth-footer">
-        Already have an account? <a href="{{ url_for('auth.login') }}">Sign in →</a>
-      </div>
+    <div style="font-size:14px;color:rgba(255,255,255,0.5)">
+      <a href="{{ url_for('auth.login') }}" style="color:rgba(255,255,255,0.7);text-decoration:none">← Back to Login</a>
     </div>
   </div>
 </div>
 
-<script>
-function setRole(role) {
-  document.getElementById('roleField').value = role;
-  document.getElementById('dealerFields').style.display = role === 'dealer' ? 'block' : 'none';
-  document.querySelectorAll('.role-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById(role === 'dealer' ? 'rbDealer' : 'rbUser').classList.add('active');
+<style>
+:root { --bg:#F5F5F5; --navy:#002366; --gold:#F7E7CE; --gold-dark:#E5D3B3; }
+.role-choice-card {
+  background: rgba(255,255,255,0.06);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 20px;
+  padding: 32px 28px;
+  text-decoration: none;
+  color: white;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  transition: all 0.3s;
+  cursor: pointer;
+  text-align: left;
 }
-document.querySelector('.role-btn[id="rbDealer"]').classList.add('active');
-
-/* ── VALIDATION HELPERS ── */
-function _showErr(id, errId, msg) {
-  const inp = document.getElementById(id);
-  const err = document.getElementById(errId);
-  if (msg) { const s = document.getElementById(errId+'Txt'); if(s) s.textContent = msg; }
-  if (inp) { inp.classList.add('input-invalid'); inp.classList.remove('input-valid'); }
-  if (err) err.style.display = 'block';
-  return false;
+.role-choice-card:hover {
+  background: rgba(247,231,206,0.12);
+  border-color: var(--gold);
+  transform: translateY(-4px);
+  box-shadow: 0 20px 50px rgba(0,0,0,0.3);
 }
-function _clearErr(id, errId) {
-  const inp = document.getElementById(id);
-  const err = document.getElementById(errId);
-  if (inp) { inp.classList.remove('input-invalid'); inp.classList.add('input-valid'); }
-  if (err) err.style.display = 'none';
-  return true;
+.rcc-icon {
+  width: 56px; height: 56px;
+  background: var(--gold);
+  border-radius: 16px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; color: var(--navy);
+  margin-bottom: 20px;
 }
-
-function vReq(id, errId) {
-  const val = (document.getElementById(id).value || '').trim();
-  return val ? _clearErr(id, errId) : _showErr(id, errId);
+.rcc-title {
+  font-family: 'Poppins', sans-serif;
+  font-size: 22px; font-weight: 800;
+  margin-bottom: 6px;
 }
-
-function vEmail() {
-  const val = (document.getElementById('regEmail').value || '').trim();
-  if (!val) return _showErr('regEmail','regEmailErr','Email address is required.');
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) return _showErr('regEmail','regEmailErr','Please enter a valid email (e.g. abc@gmail.com).');
-  return _clearErr('regEmail','regEmailErr');
+.rcc-sub { font-size: 13px; color: rgba(255,255,255,0.6); margin-bottom: 20px; }
+.rcc-features {
+  list-style: none;
+  display: flex; flex-direction: column; gap: 8px;
+  margin-bottom: 24px;
 }
-
-function vPhone(input) {
-  const el  = input || document.getElementById('regPhone');
-  // Strip all non-digit characters as user types
-  let digits = el.value.replace(/\D/g, '');
-  // Cap at exactly 10 digits
-  if (digits.length > 10) digits = digits.slice(0, 10);
-  el.value = digits;
-
-  const wrap = document.getElementById('phoneWrap');
-  const err  = document.getElementById('regPhoneErr');
-
-  if (!digits) {
-    // Phone is required — show error if blank
-    el.classList.add('input-invalid'); el.classList.remove('input-valid');
-    if (wrap) { wrap.style.borderColor = '#dc2626'; wrap.style.boxShadow = '0 0 0 3px rgba(220,38,38,0.12)'; }
-    if (err)  err.style.display = 'block';
-    const t = document.getElementById('regPhoneErrTxt');
-    if (t) t.textContent = 'Mobile number is required.';
-    return false;
-  }
-  if (digits.length !== 10) {
-    el.classList.add('input-invalid'); el.classList.remove('input-valid');
-    if (wrap) { wrap.style.borderColor = '#dc2626'; wrap.style.boxShadow = '0 0 0 3px rgba(220,38,38,0.12)'; }
-    if (err)  err.style.display = 'block';
-    const t = document.getElementById('regPhoneErrTxt');
-    if (t) t.textContent = `Please enter all 10 digits (${digits.length}/10 entered).`;
-    return false;
-  }
-  // Valid
-  el.classList.remove('input-invalid'); el.classList.add('input-valid');
-  if (wrap) { wrap.style.borderColor = '#16a34a'; wrap.style.boxShadow = '0 0 0 3px rgba(22,163,74,0.1)'; }
-  if (err)  err.style.display = 'none';
-  return true;
+.rcc-features li {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: rgba(255,255,255,0.8);
 }
-
-function vPass() {
-  const val = document.getElementById('regPass').value || '';
-  const bar = document.getElementById('passBar');
-  const lbl = document.getElementById('passStrLabel');
-  let str = 0;
-  if (val.length >= 6) str++;
-  if (val.length >= 8) str++;
-  if (/[A-Z]/.test(val)) str++;
-  if (/[0-9]/.test(val)) str++;
-  if (/[^A-Za-z0-9]/.test(val)) str++;
-  const levels = [
-    {w:'0%',   bg:'#e2e8f0', color:'#94a3b8', txt:''},
-    {w:'20%',  bg:'#dc2626', color:'#dc2626', txt:'Very Weak'},
-    {w:'40%',  bg:'#f97316', color:'#f97316', txt:'Weak'},
-    {w:'65%',  bg:'#eab308', color:'#ca8a04', txt:'Fair'},
-    {w:'85%',  bg:'#22c55e', color:'#16a34a', txt:'Strong'},
-    {w:'100%', bg:'#16a34a', color:'#15803d', txt:'Very Strong'}
-  ];
-  const lv = val.length === 0 ? levels[0] : levels[Math.max(1,str)];
-  bar.style.width = lv.w; bar.style.background = lv.bg;
-  lbl.style.color = lv.color; lbl.textContent = lv.txt;
-  if (!val) return _showErr('regPass','regPassErr','Password is required.');
-  if (val.length < 6) return _showErr('regPass','regPassErr','Password must be at least 6 characters long.');
-  _clearErr('regPass','regPassErr');
-  if (document.getElementById('regConfPass').value) vConfPass();
-  return true;
+.rcc-features li i { color: var(--gold); font-size: 11px; }
+.rcc-cta {
+  font-size: 14px; font-weight: 700;
+  color: var(--gold);
+  display: flex; align-items: center; gap: 8px;
+  margin-top: auto;
 }
-
-function vConfPass() {
-  const p = document.getElementById('regPass').value;
-  const c = document.getElementById('regConfPass').value;
-  if (!c) return _showErr('regConfPass','regConfPassErr');
-  if (p !== c) return _showErr('regConfPass','regConfPassErr');
-  return _clearErr('regConfPass','regConfPassErr');
+@media (max-width: 600px) {
+  [style*="grid-template-columns:1fr 1fr"] { grid-template-columns: 1fr !important; }
 }
-
-function validateRegForm(event) {
-  const ok = [
-    vReq('regName','regNameErr'),
-    vEmail(),
-    vPhone(document.getElementById('regPhone')),
-    vPass(),
-    vConfPass()
-  ].every(Boolean);
-  if (!ok) {
-    event.preventDefault();
-    const first = document.querySelector('.input-invalid');
-    if (first) first.scrollIntoView({ behavior:'smooth', block:'center' });
-    return false;
-  }
-  return true;
-}
-</script>
+</style>
 </body>
 </html>
