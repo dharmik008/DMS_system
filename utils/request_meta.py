@@ -43,3 +43,4 @@ def get_request_meta(request):
     ip = get_real_ip(request)
     browser, os_name, device = get_browser_os_device(request)
     return ip, browser, os_name, device
+
