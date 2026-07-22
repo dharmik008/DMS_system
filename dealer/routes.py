@@ -624,17 +624,32 @@ def classify_vehicle_photo_api():
 @dealer_bp.route('/inventory/api/estimate-price', methods=['POST'])
 @dealer_required
 def estimate_vehicle_price_api():
-    """Called by the "Estimate Price" button on the Add/Edit Vehicle form.
-    Combines the vehicle's basic details, its Condition Details answers,
-    and (optionally) the photos already selected for the 7 mandatory
-    slots into a suggested asking price. See utils/vehicle_price_ai.py
-    for exactly how the number is derived — always returned with a full
-    breakdown, never a bare number."""
+    """Called by the "Estimate Price (AI)" button on the Add/Edit Vehicle
+    form.
+
+    DEFAULT (free, no API cost): the offline rule-based calculator in
+    utils/vehicle_price_ai.py. It adjusts the dealer's own Asking Price
+    down/up using age, mileage, Condition Details and photo checks — all
+    local, no external API calls, no charges.
+
+    OPTIONAL (paid): if the dealer explicitly ticks "Also check live
+    market listings" on the form (use_live_market=1), we additionally call
+    utils/vehicle_market_price_ai.py, which uses the Anthropic API with
+    web_search — this costs money per call (Anthropic bills per token +
+    per search), so it only ever runs when the dealer opts in on purpose.
+    If that call fails for any reason, we silently keep the free result
+    that's already been computed."""
     from utils.vehicle_price_ai import estimate_vehicle_price
 
     vehicle_data = {
-        'year':                request.form.get('year'),
+        'make':                 request.form.get('make'),
+        'model':                request.form.get('model'),
+        'variant':              request.form.get('variant'),
+        'year':                 request.form.get('year'),
+        'fuel_type':            request.form.get('fuel_type'),
+        'transmission':         request.form.get('transmission'),
         'mileage':              request.form.get('mileage'),
+        'city':                 (g.user or {}).get('city'),
         'reference_price':      request.form.get('reference_price'),
         'accident_history':     request.form.get('accident_history', 'NA'),
         'loan_status':          request.form.get('loan_status', 'NA'),
@@ -655,6 +670,24 @@ def estimate_vehicle_price_api():
     result = estimate_vehicle_price(vehicle_data, image_files)
     if not result['ok']:
         return jsonify(result), 400
+    result['source'] = 'offline_free'
+
+    # ── Optional paid add-on — only runs if the dealer explicitly asked ──
+    if request.form.get('use_live_market') == '1':
+        from utils.vehicle_market_price_ai import estimate_market_price
+        market = estimate_market_price(vehicle_data, image_files)
+        if market['ok']:
+            market['source'] = 'live_market'
+            market['offline_estimate'] = {
+                'estimated_price': result['estimated_price'],
+                'estimated_range': result['estimated_range'],
+            }
+            return jsonify(market)
+        else:
+            # Paid lookup failed/unavailable — keep the free result, just
+            # note why the live search didn't run.
+            result['live_market_note'] = market.get('error')
+
     return jsonify(result)
 
 
