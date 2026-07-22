@@ -1,3 +1,47 @@
+"""
+ip_utils.py — Single source of truth for real client IP detection.
+
+Used by BOTH the Visitor Logs system (utils/visitor_tracker.py) and the
+Activity Logs system (utils/request_meta.py) so there is exactly one place
+that knows how to find a visitor's real IP address. Nothing else in the
+codebase should re-implement this logic.
+
+Why this exists
+----------------
+Flask's `request.remote_addr` only reflects the IP of the TCP connection
+into the Flask process. When the app sits behind a reverse proxy (Nginx,
+Apache), a load balancer, or Cloudflare, that connection is from the proxy
+itself — so `remote_addr` is the proxy's address (often 127.0.0.1 or an
+internal/private IP), never the visitor's. The real client IP is instead
+carried in a request header set by the proxy.
+
+This module:
+  1. Reads a small set of well-known proxy/CDN headers, in priority order.
+  2. Walks every IP listed in each header (X-Forwarded-For can contain a
+     whole hop chain: "client, proxy1, proxy2") rather than blindly trusting
+     the first entry.
+  3. Validates every candidate with Python's stdlib `ipaddress` module and
+     SKIPS anything invalid, empty, loopback, link-local, private, or
+     carrier-grade-NAT — only a plausible public IP is accepted.
+  4. Falls back to `request.remote_addr` only if no header yields a usable
+     public IP (correct behavior for local development, where remote_addr
+     IS the real, useful value).
+
+Production note
+----------------
+Trusting `X-Forwarded-For` / `X-Real-IP` / `CF-Connecting-IP` is only safe
+when the app is actually deployed behind the proxy that sets them — an
+internet-facing Flask process with no proxy in front of it would let any
+client simply fake these headers. For real production hardening you should
+also configure your web server (Nginx/Apache) to strip any client-supplied
+copies of these headers before forwarding, and/or list your proxy's own
+address(es) in TRUSTED_PROXY_IPS below so spoofed headers from elsewhere
+are ignored. Both are supported but optional — by default this module
+trusts the headers as long as the value resolves to a plausible public IP,
+which matches how the existing system already worked and keeps local/dev
+environments working without extra configuration.
+"""
+
 from __future__ import annotations
 import ipaddress
 import os
