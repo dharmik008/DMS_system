@@ -47,6 +47,18 @@ python-dotenv==1.0.1
 click==8.1.7
 requests==2.31.0
 
+# ── Live Market Price Estimation (Add Vehicle — "Estimate Price (AI)") ────────
+# Calls the Anthropic API with the web_search tool to look up REAL, current
+# used-car listings (make+model+variant+year+city) instead of a manual
+# reference price. Needs ANTHROPIC_API_KEY set in your .env — see
+# utils/vehicle_market_price_ai.py for details.
+anthropic==0.40.0
+
+# ── AI Chatbot ("Cara") — Groq LLM API ─────────────────────────────────────────
+# Uses plain `requests` (already listed above) against Groq's OpenAI-compatible
+# REST endpoint, so no extra SDK is required. Needs GROQ_API_KEY in .env —
+# get a free key at https://console.groq.com/keys. See chatbot/routes.py.
+
 # ── Production Server ─────────────────────────────────────────────────────────
 gunicorn==22.0.0
 
