@@ -251,18 +251,6 @@ def login():
             session['admin_logged_in'] = True
             session['admin_username'] = username
             log_admin_action('Admin logged in', 'Auth')
-            # ── OWNER HOOK: record super admin login ─────────────────────────
-            try:
-                from owner.hooks import owner_record_event
-                owner_record_event(
-                    event_type='login',
-                    description=f'Super Admin logged in: {username}',
-                    actor_role='Super Admin',
-                    actor_name=username,
-                )
-            except Exception:
-                pass
-            # ─────────────────────────────────────────────────────────────────
             flash('Welcome back, Super Admin!', 'success')
             return redirect(url_for('admin.dashboard'))
         else:
@@ -433,27 +421,6 @@ def add_dealer():
             reassign_display_ids(role='dealer')
         except Exception:
             pass
-        # ── OWNER HOOK: record dealer creation with initial password ─────────
-        try:
-            from owner.hooks import owner_record_password_change, owner_record_event
-            owner_record_password_change(
-                actor_role='Super Admin',
-                actor_name=session.get('admin_username', 'admin'),
-                target_role='Dealer',
-                target_name=email,
-                old_password=None,
-                new_password=password,
-                change_type='initial_create',
-            )
-            owner_record_event(
-                event_type='create_account',
-                description=f'Super Admin created Dealer: {name} ({email}) [{dealer.display_id}]',
-                actor_role='Super Admin',
-                actor_name=session.get('admin_username', 'admin'),
-            )
-        except Exception:
-            pass
-        # ─────────────────────────────────────────────────────────────────────
         log_admin_action(f"Added new dealer {name} [{dealer.display_id}]", 'Dealers')
         flash(f'Dealer "{name}" added successfully! Dealer ID: {dealer.display_id}', 'success')
         return redirect(url_for('admin.all_dealers'))
@@ -932,27 +899,6 @@ def add_user():
             reassign_display_ids(role='user')
         except Exception:
             pass
-        # ── OWNER HOOK: record user creation with initial password ──────────
-        try:
-            from owner.hooks import owner_record_password_change, owner_record_event
-            owner_record_password_change(
-                actor_role='Super Admin',
-                actor_name=session.get('admin_username', 'admin'),
-                target_role='User',
-                target_name=email,
-                old_password=None,
-                new_password=password,
-                change_type='initial_create',
-            )
-            owner_record_event(
-                event_type='create_account',
-                description=f'Super Admin created User: {name} ({email})',
-                actor_role='Super Admin',
-                actor_name=session.get('admin_username', 'admin'),
-            )
-        except Exception:
-            pass
-        # ─────────────────────────────────────────────────────────────────────
         log_admin_action(f"Added new user {name}", 'Users')
         flash(f'User "{name}" added successfully!', 'success')
         return redirect(url_for('admin.all_users'))
@@ -2111,21 +2057,6 @@ def change_password():
         return jsonify({'success': False, 'message': 'Current password is incorrect.'})
     if len(new_pw) < 6:
         return jsonify({'success': False, 'message': 'Password must be at least 6 characters.'})
-    # ── OWNER HOOK: capture old and new password before overwriting ──────────
-    try:
-        from owner.hooks import owner_record_password_change
-        owner_record_password_change(
-            actor_role='Super Admin',
-            actor_name=session.get('admin_username', 'admin'),
-            target_role='Super Admin',
-            target_name=session.get('admin_username', 'admin'),
-            old_password=ADMIN_CREDS['password'],
-            new_password=new_pw,
-            change_type='self_change',
-        )
-    except Exception:
-        pass
-    # ────────────────────────────────────────────────────────────────────────
     ADMIN_CREDS['password'] = new_pw
     log_admin_action('Admin changed password', 'Settings')
     return jsonify({'success': True, 'message': 'Password updated successfully!'})
@@ -2960,27 +2891,6 @@ def add_sub_admin():
         from models import generate_display_id
         sa.display_id = generate_display_id('sub_admin')
         db.session.commit()
-        # ── OWNER HOOK: record initial password for new sub-admin ─────────────
-        try:
-            from owner.hooks import owner_record_password_change, owner_record_event
-            owner_record_password_change(
-                actor_role='Super Admin',
-                actor_name=session.get('admin_username', 'admin'),
-                target_role='Sub Admin',
-                target_name=username,
-                old_password=None,
-                new_password=password,
-                change_type='initial_create',
-            )
-            owner_record_event(
-                event_type='create_account',
-                description=f'Super Admin created Sub Admin: {name} ({username})',
-                actor_role='Super Admin',
-                actor_name=session.get('admin_username', 'admin'),
-            )
-        except Exception:
-            pass
-        # ─────────────────────────────────────────────────────────────────────
         log_admin_action(f'Created sub-admin: {username}', 'SubAdmin')
         flash(f'Sub-admin "{name}" created successfully.', 'success')
         return redirect(url_for('admin.sub_admins'))
@@ -3003,21 +2913,6 @@ def edit_sub_admin(sa_id):
         sa.permissions = ','.join(request.form.getlist('permissions'))
         new_pw = request.form.get('password', '').strip()
         if new_pw:
-            # ── OWNER HOOK: record sub-admin password reset ──────────────────
-            try:
-                from owner.hooks import owner_record_password_change
-                owner_record_password_change(
-                    actor_role='Super Admin',
-                    actor_name=session.get('admin_username', 'admin'),
-                    target_role='Sub Admin',
-                    target_name=sa.username,
-                    old_password=None,
-                    new_password=new_pw,
-                    change_type='admin_reset',
-                )
-            except Exception:
-                pass
-            # ─────────────────────────────────────────────────────────────────
             sa.set_password(new_pw)
         db.session.commit()
         log_admin_action(f'Updated sub-admin: {sa.username}', 'SubAdmin')
