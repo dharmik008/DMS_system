@@ -87,8 +87,6 @@ class User(UserMixin, db.Model):
     gst_number = db.Column(db.String(20))
     city = db.Column(db.String(100))
     is_active = db.Column(db.Boolean, default=True)
-    is_locked = db.Column(db.Boolean, default=False)               # v26: Owner can lock accounts
-    force_password_change = db.Column(db.Boolean, default=False)   # v26: Force PW change on next login
     created_at = db.Column(db.DateTime, default=_now_ist)
     subscription_plan = db.Column(db.String(50), default='starter')
     subscription_expiry = db.Column(db.DateTime, nullable=True)
