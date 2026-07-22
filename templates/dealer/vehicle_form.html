@@ -501,14 +501,19 @@
           <i class="fas fa-calculator" style="margin-right:8px;color:var(--gold-accent,#f59e0b)"></i>
           AI Price Estimation
         </div>
-        <span style="font-size:12px;color:var(--text-secondary,#6b7280)">Uses the Asking Price above as reference, plus condition &amp; photos</span>
+        <span style="font-size:12px;color:var(--text-secondary,#6b7280)">Free — uses the Asking Price above as reference, plus condition &amp; photos</span>
       </div>
       <div class="card-body" style="padding:24px">
         <p style="margin:0 0 16px;font-size:13px;color:var(--text-muted,#6b7280);line-height:1.6;">
           Fill in the <b>Asking Price</b> field above with what a similar car in top condition
-          currently sells for, then click below — the AI will adjust it down for this vehicle's
-          age, mileage, condition details and photos, and suggest a fair price.
+          currently sells for, then click below — this runs entirely on this server, free,
+          no external API calls — and adjusts it down for this vehicle's age, mileage,
+          condition details and photos to suggest a fair price.
         </p>
+        <label class="form-check" style="margin-bottom:14px;font-size:12.5px;color:#374151;">
+          <input type="checkbox" id="useLiveMarketCheck">
+          Also check live market listings online <span style="color:#b45309;font-weight:600;">(uses paid AI search — costs a small amount per check, only runs if ticked)</span>
+        </label>
         <button type="button" id="estimatePriceBtn" class="btn btn-primary btn-lg" onclick="estimateVehiclePrice()">
           <i class="fas fa-calculator" style="margin-right:6px;"></i>Estimate Price (AI)
         </button>
@@ -1139,13 +1144,18 @@ async function generateAIDescription() {
 }
 
 /* ── AI-assisted Price Estimation ─────────────────────────────────────────
-   Combines make/model basics + Vehicle Condition Details + the 7 mandatory
-   photos (if already selected) into a suggested price. Purely assistive —
-   dealer reviews the breakdown and decides whether to use it. */
+   FREE by default: combines make/model basics + Vehicle Condition Details +
+   the 7 mandatory photos (if already selected) into a suggested price using
+   the offline rule-based calculator — no external API calls, no cost.
+   OPTIONAL paid add-on: if the dealer ticks "Also check live market
+   listings", the server additionally calls the Anthropic web-search-based
+   estimator — only then does anything paid run. Purely assistive — dealer
+   reviews the breakdown and decides whether to use it. */
 async function estimateVehiclePrice() {
   var btn = document.getElementById('estimatePriceBtn');
   var resultBox = document.getElementById('priceEstimateResult');
   var askingPriceInput = document.getElementById('askingPriceInput');
+  var useLiveMarketCheck = document.getElementById('useLiveMarketCheck');
 
   var year = (document.querySelector('[name="year"]') || {}).value || '';
   var mileage = (document.querySelector('[name="mileage"]') || {}).value || '0';
@@ -1163,9 +1173,16 @@ async function estimateVehiclePrice() {
   }
 
   var fd = new FormData();
+  ['make', 'model', 'variant', 'fuel_type', 'transmission'].forEach(function (name) {
+    var el = document.querySelector('[name="' + name + '"]');
+    if (el) fd.append(name, el.value || '');
+  });
   fd.append('year', year);
   fd.append('mileage', mileage);
   fd.append('reference_price', referencePrice);
+  if (useLiveMarketCheck && useLiveMarketCheck.checked) {
+    fd.append('use_live_market', '1');
+  }
 
   ['accident_history', 'loan_status', 'rc_service_records', 'keys_available', 'body_panel_status'].forEach(function (name) {
     var el = document.querySelector('[name="' + name + '"]');
@@ -1197,31 +1214,56 @@ async function estimateVehiclePrice() {
       throw new Error(data.error || 'Could not estimate price right now.');
     }
 
-    var b = data.breakdown;
-    var issuesHtml = (b.condition_issues && b.condition_issues.length)
-      ? b.condition_issues.map(function (i) { return '<li>' + i.name + ' <small>(' + i.severity + ')</small></li>'; }).join('')
-      : '<li>No condition issues flagged</li>';
-
-    var imgLine = b.image_condition && b.image_condition.available
-      ? 'Visual photo check: ' + b.image_condition.photos_scanned + ' photo(s) scanned — ' + b.image_deduction_pct + '% adjustment'
-      : 'Visual photo check: not available (' + (b.image_condition ? b.image_condition.reason : 'no photos') + ')';
-
-    resultBox.innerHTML =
+    var priceRow =
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;">' +
         '<div>' +
-          '<div style="font-size:13px;color:var(--text-muted,#6b7280);">Suggested Price</div>' +
+          '<div style="font-size:13px;color:var(--text-muted,#6b7280);">Suggested Price' + (data.source === 'live_market' ? ' (live market)' : ' (free estimate)') + '</div>' +
           '<div style="font-size:24px;font-weight:800;color:var(--gold-accent,#b45309);">₹' + Number(data.estimated_price).toLocaleString('en-IN') + '</div>' +
           '<div style="font-size:12px;color:var(--text-muted,#6b7280);">Likely range: ₹' + Number(data.estimated_range.low).toLocaleString('en-IN') + ' – ₹' + Number(data.estimated_range.high).toLocaleString('en-IN') + '</div>' +
         '</div>' +
         '<button type="button" class="btn btn-primary" onclick="document.getElementById(\'askingPriceInput\').value=' + data.estimated_price + '">Use This Price</button>' +
-      '</div>' +
-      '<hr style="margin:14px 0;border-color:#e5e7eb;">' +
-      '<div style="font-size:13px;color:#374151;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;">' +
-        '<div>Vehicle age: <b>' + b.vehicle_age_years + ' yrs</b> → -' + b.age_depreciation_pct + '%</div>' +
-        '<div>Mileage adjustment: <b>' + b.mileage_adjustment_pct + '%</b><br><small style="color:#6b7280;">' + b.mileage_note + '</small></div>' +
-        '<div>Condition deduction: <b>-' + b.condition_deduction_pct + '%</b><ul style="margin:4px 0 0 16px;padding:0;">' + issuesHtml + '</ul></div>' +
-        '<div>' + imgLine + '</div>' +
-      '</div>' +
+      '</div>';
+
+    var bodyHtml;
+    if (data.source === 'live_market') {
+      var listingsHtml = (data.comparable_listings && data.comparable_listings.length)
+        ? '<ul style="margin:6px 0 0 16px;padding:0;font-size:12px;line-height:1.7;">' +
+            data.comparable_listings.map(function (l) {
+              var priceStr = l.price ? '₹' + Number(l.price).toLocaleString('en-IN') : 'price n/a';
+              var kmStr = l.km ? ', ' + Number(l.km).toLocaleString('en-IN') + ' km' : '';
+              var titleHtml = l.url
+                ? '<a href="' + l.url + '" target="_blank" rel="noopener">' + l.title + '</a>'
+                : l.title;
+              return '<li>' + titleHtml + ' — ' + priceStr + kmStr + ' <small style="color:#6b7280;">(' + l.source + ')</small></li>';
+            }).join('') +
+          '</ul>'
+        : '<div style="font-size:12px;color:#6b7280;margin-top:6px;">No specific comparable listings returned.</div>';
+      bodyHtml =
+        '<div style="font-size:12px;color:#6b7280;margin-bottom:4px;">Confidence: <b>' + (data.confidence || 'medium') + '</b>' +
+          (data.photos_analyzed ? ' · ' + data.photos_analyzed + ' photo(s) analyzed' : '') + '</div>' +
+        '<div style="font-size:13px;color:#374151;margin-bottom:8px;">' + (data.market_summary || '') + '</div>' +
+        (data.condition_adjustment_note ? '<div style="font-size:12px;color:#374151;font-style:italic;margin-bottom:8px;">' + data.condition_adjustment_note + '</div>' : '') +
+        '<div style="font-size:12.5px;font-weight:700;color:#111827;">Comparable live listings found:</div>' +
+        listingsHtml;
+    } else {
+      var b = data.breakdown;
+      var issuesHtml = (b.condition_issues && b.condition_issues.length)
+        ? b.condition_issues.map(function (i) { return '<li>' + i.name + ' <small>(' + i.severity + ')</small></li>'; }).join('')
+        : '<li>No condition issues flagged</li>';
+      var imgLine = b.image_condition && b.image_condition.available
+        ? 'Visual photo check: ' + b.image_condition.photos_scanned + ' photo(s) scanned — ' + b.image_deduction_pct + '% adjustment'
+        : 'Visual photo check: not available (' + (b.image_condition ? b.image_condition.reason : 'no photos') + ')';
+      bodyHtml =
+        (data.live_market_note ? '<div style="margin:0 0 10px;font-size:12px;color:#b45309;">⚠ Live market check didn\'t run: ' + data.live_market_note + '</div>' : '') +
+        '<div style="font-size:13px;color:#374151;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;">' +
+          '<div>Vehicle age: <b>' + b.vehicle_age_years + ' yrs</b> → -' + b.age_depreciation_pct + '%</div>' +
+          '<div>Mileage adjustment: <b>' + b.mileage_adjustment_pct + '%</b><br><small style="color:#6b7280;">' + b.mileage_note + '</small></div>' +
+          '<div>Condition deduction: <b>-' + b.condition_deduction_pct + '%</b><ul style="margin:4px 0 0 16px;padding:0;">' + issuesHtml + '</ul></div>' +
+          '<div>' + imgLine + '</div>' +
+        '</div>';
+    }
+
+    resultBox.innerHTML = priceRow + '<hr style="margin:14px 0;border-color:#e5e7eb;">' + bodyHtml +
       '<div style="margin-top:12px;font-size:12px;color:#6b7280;font-style:italic;">' + data.disclaimer + '</div>';
     resultBox.style.display = 'block';
   } catch (err) {
