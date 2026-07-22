@@ -318,6 +318,7 @@
     </script>
     {% block extra_js %}{% endblock %}
     {% include '_success_popup.html' %}
+    {% include '_chatbot_widget.html' %}
     {% with login_messages = get_flashed_messages(with_categories=true) %}
       {% for cat, msg in login_messages %}
         {% if cat == 'success' and msg == 'Login successful!' %}
