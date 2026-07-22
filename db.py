@@ -1,496 +1,1173 @@
-"""
-app.py — Caryanams DMS
-PostgreSQL Migration (v27):
-  - SQLALCHEMY_DATABASE_URI now reads from DATABASE_URL env var (PostgreSQL).
-  - All inline PRAGMA-based SQLite column-detection replaced with
-    information_schema queries that work on PostgreSQL.
-  - SQLite-only DDL (AUTOINCREMENT, PRAGMA foreign_keys, INTEGER PRIMARY KEY)
-    replaced with PostgreSQL-compatible equivalents.
-  - All business logic, routes, templates, and features are unchanged.
-"""
+from datetime import datetime, date, timedelta, timezone as _tz
 
-from flask import Flask, session, g, flash
-import os
+_IST = _tz(timedelta(hours=5, minutes=30))
 
 
-def _pg_column_exists(conn, table_name, column_name):
-    """
-    PostgreSQL-compatible column existence check.
-    Replaces: PRAGMA table_info(<table>)
-    """
-    from sqlalchemy import text
-    result = conn.execute(text("""
-        SELECT COUNT(*)
-        FROM information_schema.columns
-        WHERE table_name = :tbl
-          AND column_name = :col
-    """), {"tbl": table_name, "col": column_name})
-    return result.scalar() > 0
+def _now_ist():
+    return datetime.now(_IST).replace(tzinfo=None)
 
 
-def _pg_table_exists(conn, table_name):
-    """
-    PostgreSQL-compatible table existence check.
-    Replaces: SELECT name FROM sqlite_master WHERE type='table'
-    """
-    from sqlalchemy import text
-    result = conn.execute(text("""
-        SELECT COUNT(*)
-        FROM information_schema.tables
-        WHERE table_name = :tbl
-    """), {"tbl": table_name})
-    return result.scalar() > 0
+def parse_date(value):
+    if value:
+        return datetime.strptime(value, '%Y-%m-%d').date()
+    return None
+
+from sqlalchemy import func, or_
+from models import (db, User, Agent, Vehicle, Lead, Deal, Document, Inquiry, VehicleImage,
+                     CentralDocumentStorage, CentralDocumentAuditLog,
+                     compute_deal_financials, DEAL_REVENUE_STATUSES)
+
+# ========== USER FUNCTIONS ==========
 
 
-def create_app():
-    app = Flask(__name__)
-    app.secret_key = 'Caryanams-secret-2025-xK9mP'
-    app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'static', 'images', 'uploads')
-    app.config['KYC_UPLOAD_FOLDER']     = os.path.join(os.path.dirname(__file__), 'static', 'uploads', 'dealers')
-    app.config['VEHICLE_UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'static', 'uploads', 'vehicles')
-    app.config['ALLOWED_IMAGE_EXTENSIONS'] = {'jpg', 'jpeg', 'png', 'webp'}
-    app.config['MAX_IMAGE_SIZE']        = 10 * 1024 * 1024   # 10 MB per image
+def user_get_by_id(uid):
+    if not uid:
+        return None
+    user = User.query.get(uid)
+    if user:
+        return {
+            'id': user.id,
+            'name': user.name,
+            'email': user.email,
+            'phone': user.phone,
+            'role': user.role,
+            'is_active': user.is_active,
+            'company': user.company_name,
+            'gst': user.gst_number,
+            'city': user.city,
+            'subscription_plan': user.subscription_plan,
+            'subscription_expiry': user.subscription_expiry,
+            'subscription_status': user.subscription_status,
+            'website_name': user.website_name,
+            'website_logo': user.website_logo,
+            'whatsapp_number': user.whatsapp_number,
+            'address': user.address,
+            'google_maps_url': user.google_maps_url,
+            'years_in_business': user.years_in_business,
+            'business_hours': user.business_hours,
+        }
+    return None
 
-    # ── Dealer KYC document verification engine (utils/kyc_engine) ─────────
-    # Real image-quality + OCR checks run on the 3 dealer KYC docs
-    # (Aadhaar Front, Aadhaar Back, PAN) at upload time, before an admin
-    # ever sees them. Thresholds are tunable via env vars in production.
-    app.config['KYC_ALLOWED_EXTENSIONS']            = {'jpg', 'jpeg', 'png', 'webp', 'pdf'}
-    app.config['KYC_MAX_UPLOAD_BYTES']              = 10 * 1024 * 1024   # 10 MB hard cap
-    app.config['KYC_MIN_WIDTH']                     = int(os.environ.get('KYC_MIN_WIDTH', 1000))
-    app.config['KYC_MIN_HEIGHT']                    = int(os.environ.get('KYC_MIN_HEIGHT', 700))
-    app.config['KYC_GLARE_BRIGHT_PIXEL_RATIO']      = float(os.environ.get('KYC_GLARE_BRIGHT_PIXEL_RATIO', 0.06))
-    app.config['KYC_DARK_MEAN_BRIGHTNESS']          = float(os.environ.get('KYC_DARK_MEAN_BRIGHTNESS', 60))
-    app.config['KYC_OVEREXPOSED_MEAN_BRIGHTNESS']   = float(os.environ.get('KYC_OVEREXPOSED_MEAN_BRIGHTNESS', 225))
-    app.config['KYC_BLUR_LAPLACIAN_THRESHOLD']      = float(os.environ.get('KYC_BLUR_LAPLACIAN_THRESHOLD', 120.0))
-    app.config['KYC_NAME_SIMILARITY_THRESHOLD']     = float(os.environ.get('KYC_NAME_SIMILARITY_THRESHOLD', 0.90))
-    app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024   # 100 MB
 
-    # ── PostgreSQL Database URI ────────────────────────────────────────────────
-    # Set DATABASE_URL in your .env file:
-    #   DATABASE_URL=postgresql://caryanams_user:yourpassword@localhost:5432/caryanams_db
-    # Falls back to SQLite only if DATABASE_URL is not set (for local dev without PG).
-    _db_url = os.environ.get('DATABASE_URL', 'sqlite:///Caryanams.db')
-    # Heroku / some PaaS providers emit postgres:// — SQLAlchemy requires postgresql://
-    if _db_url.startswith('postgres://'):
-        _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
-    app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+def user_get_by_email(email):
+    return User.query.filter_by(email=email).first()
 
-    # ── Razorpay Payment Gateway ───────────────────────────────────────────────
-    # ⚠️  ONLY these two lines need your real keys — get them from:
-    #     https://dashboard.razorpay.com → Settings → API Keys
-    # For testing use Test keys (rzp_test_...), for live use Live keys (rzp_live_...)
-    app.config['ANTHROPIC_API_KEY']   = os.environ.get('ANTHROPIC_API_KEY', '')
 
-    # ── Groq AI Chatbot (Caryanams Assistant) ────────────────────────────────────────────
-    # Free key: https://console.groq.com/keys — put GROQ_API_KEY in your .env
-    app.config['GROQ_API_KEY'] = os.environ.get('GROQ_API_KEY', '')
-    app.config['GROQ_MODEL']   = os.environ.get('GROQ_MODEL', 'llama-3.3-70b-versatile')
-    app.config['RAZORPAY_KEY_ID']     = os.environ.get('RAZORPAY_KEY_ID',     'rzp_test_XXXXXXXXXXXXXXXX')
-    app.config['RAZORPAY_KEY_SECRET'] = os.environ.get('RAZORPAY_KEY_SECRET', 'XXXXXXXXXXXXXXXXXXXXXXXX')
-
-    # ── Subscription payment switches ──────────────────────────────────────
-    # Razorpay stays OFF until real API keys are added — set RAZORPAY_ENABLED
-    # to True (and RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET env vars) to flip
-    # subscription checkout over to the live gateway later.
-    app.config['RAZORPAY_ENABLED'] = os.environ.get('RAZORPAY_ENABLED', 'False') == 'True'
-    # Admin-controlled switch for the "Use Free For Now" demo activation button.
-    app.config['ALLOW_FREE_PLAN_ACTIVATION'] = os.environ.get('ALLOW_FREE_PLAN_ACTIVATION', 'True') == 'True'
-    # ─────────────────────────────────────────────────────────────────────────
-
-    # ── WhatsApp Cloud API — customer inquiry confirmation ─────────────────
-    # OFF by default until real credentials + an approved message template
-    # are configured (see utils/whatsapp.py header for full setup steps).
-    # Safe no-op otherwise: inquiries still save normally, just no WhatsApp
-    # message goes out (logged as 'skipped' in whatsapp_message_log).
-    app.config['WHATSAPP_ENABLED']              = os.environ.get('WHATSAPP_ENABLED', 'False') == 'True'
-    app.config['WHATSAPP_ACCESS_TOKEN']         = os.environ.get('WHATSAPP_ACCESS_TOKEN', '')
-    app.config['WHATSAPP_PHONE_NUMBER_ID']      = os.environ.get('WHATSAPP_PHONE_NUMBER_ID', '')
-    app.config['WHATSAPP_API_VERSION']          = os.environ.get('WHATSAPP_API_VERSION', 'v20.0')
-    app.config['WHATSAPP_COUNTRY_CODE']         = os.environ.get('WHATSAPP_COUNTRY_CODE', '91')
-    app.config['WHATSAPP_INQUIRY_TEMPLATE_NAME'] = os.environ.get('WHATSAPP_INQUIRY_TEMPLATE_NAME', 'inquiry_confirmation')
-    app.config['WHATSAPP_TEMPLATE_LANGUAGE']    = os.environ.get('WHATSAPP_TEMPLATE_LANGUAGE', 'en_US')
-    # ─────────────────────────────────────────────────────────────────────────
-
-    # ── Bank / UPI Fallback Payment Details ───────────────────────────────────
-    # Shown when Razorpay is not yet configured (or as an alternative UPI QR).
-    # Update these with your real details via env vars or directly here.
-    app.config['BANK_UPI_CONFIG'] = {
-        'upi_id':       os.environ.get('UPI_ID',       'caryanams@upi'),
-        'upi_name':     os.environ.get('UPI_NAME',     'Caryanams Payments'),
-        'bank_name':    os.environ.get('BANK_NAME',    'HDFC Bank'),
-        'account_name': os.environ.get('BANK_ACNAME',  'Caryanams Pvt Ltd'),
-        'account_no':   os.environ.get('BANK_ACCNO',   '50200012345678'),
-        'ifsc':         os.environ.get('BANK_IFSC',    'HDFC0001234'),
-        'branch':       os.environ.get('BANK_BRANCH',  'Main Branch'),
-    }
-    # ─────────────────────────────────────────────────────────────────────────
-
-    # ── Public base URL — used for minisite full URLs ──────────────────────────
-    # Set APP_URL env var in production: export APP_URL=https://yourdomain.com
-    # (or https://yourdomain.com/app if deployed under a subdirectory).
-    # If APP_URL is not set, the minisite_url() helpers below derive the base
-    # URL dynamically from the incoming request's origin (request.url_root),
-    # so local dev automatically resolves to http://localhost:5000 and a live
-    # deployment automatically resolves to its real domain — no hardcoding.
-    _raw_app_url = os.environ.get('APP_URL', '').rstrip('/')
-    app.config['APP_URL'] = _raw_app_url
-
-    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-    os.makedirs(app.config['KYC_UPLOAD_FOLDER'],     exist_ok=True)
-    os.makedirs(app.config['VEHICLE_UPLOAD_FOLDER'], exist_ok=True)
-    os.makedirs(os.path.join(os.path.dirname(__file__), 'static', 'processed'),           exist_ok=True)
-    os.makedirs(os.path.join(os.path.dirname(__file__), 'static', 'custom_bgs'),         exist_ok=True)
-    os.makedirs(os.path.join(os.path.dirname(__file__), 'static', 'images', 'defaults'), exist_ok=True)
-
-    # ── Ensure default_car.jpg placeholder always exists ─────────────────────
-    _default_car_path = os.path.join(
-        os.path.dirname(__file__), 'static', 'images', 'defaults', 'default_car.jpg'
+def user_create(data):
+    from models import generate_display_id
+    user = User(
+        name=data['name'],
+        email=data['email'],
+        phone=data.get('phone', ''),
+        role=data['role'],
+        company_name=data.get('company_name', ''),
+        gst_number=data.get('gst_number', ''),
+        city=data.get('city', '')
     )
-    if not os.path.isfile(_default_car_path):
-        try:
-            from PIL import Image as _PI, ImageDraw as _PID, ImageFont as _PIF
-            W, H = 1280, 720
-            _im = _PI.new('RGB', (W, H), (240, 240, 240))
-            _dr = _PID.Draw(_im)
-            _cc, _oc = (180,180,190), (120,120,130)
-            _dr.polygon([(200,420),(200,380),(280,280),(420,240),(640,230),(820,240),(960,280),(1060,380),(1060,420)], fill=_cc, outline=_oc)
-            _dr.rectangle([200,400,1060,470], fill=_cc, outline=_oc)
-            _dr.polygon([(300,380),(380,270),(640,250),(840,260),(940,380)], fill=(200,200,210), outline=_oc)
-            _dr.polygon([(320,375),(385,275),(590,258),(590,375)], fill=(160,200,220), outline=_oc)
-            _dr.polygon([(610,258),(840,265),(930,375),(610,375)], fill=(160,200,220), outline=_oc)
-            _dr.ellipse([290,430,430,530], fill=(60,60,70), outline=_oc)
-            _dr.ellipse([320,455,400,505], fill=(200,200,200))
-            _dr.ellipse([830,430,970,530], fill=(60,60,70), outline=_oc)
-            _dr.ellipse([860,455,940,505], fill=(200,200,200))
-            _dr.ellipse([195,370,230,400], fill=(255,250,200), outline=_oc)
-            _dr.rectangle([1055,375,1070,405], fill=(220,50,50), outline=_oc)
-            try:
-                _fn = _PIF.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 36)
-                _fn2 = _PIF.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 22)
-            except Exception:
-                _fn = _fn2 = _PIF.load_default()
-            _dr.text((W//2, 600), 'No Image Available', fill=(150,150,160), font=_fn, anchor='mm')
-            _dr.text((W//2, 645), 'Vehicle image will appear here', fill=(170,170,180), font=_fn2, anchor='mm')
-            _im.save(_default_car_path, 'JPEG', quality=85, optimize=True)
-        except Exception:
-            try:
-                from PIL import Image as _PIX
-                _PIX.new('RGB', (4,3), (200,200,200)).save(_default_car_path, 'JPEG')
-            except Exception:
-                pass
-
-    from extensions import db, login_manager, csrf
-    db.init_app(app)
-    login_manager.init_app(app)
-
-    # ── CSRF Protection (Flask-WTF) ─────────────────────────────────────────
-    # Protects every state-changing request (POST/PUT/PATCH/DELETE) across
-    # ALL blueprints (auth, dealer, admin, user, minisite, background,
-    # policies) against Cross-Site Request Forgery. Templates send the token
-    # via a hidden {{ csrf_token() }} field; AJAX calls send it automatically
-    # via the X-CSRFToken header (see static/js/csrf.js).
-    app.config['WTF_CSRF_TIME_LIMIT'] = None          # tokens don't expire mid-session
-    app.config['WTF_CSRF_SSL_STRICT'] = False          # allow http:// in local/dev
-    csrf.init_app(app)
-
-    # ── Register Blueprints first so their models are imported ────────────────
-    # FIX: StudioImage is defined inside background/routes.py (not models.py).
-    # If background_bp is registered AFTER db.create_all(), SQLAlchemy never
-    # sees StudioImage and skips creating the studio_image table.
-    # Solution: register blueprints BEFORE the app context / create_all block.
-    from auth.routes       import auth_bp
-    from dealer.routes     import dealer_bp
-    from user.routes       import user_bp
-    from background.routes import background_bp   # ← imports StudioImage into metadata
-    from minisite.routes   import minisite_bp
-    from admin.routes      import admin_bp
-    from policies.routes   import policies_bp         # ← Privacy & Refund Policy pages
-    from chatbot.routes    import chatbot_bp           # ← Caryanams Assistant (Groq-powered, multilingual)
-
-    app.register_blueprint(auth_bp,        url_prefix='/auth')
-    app.register_blueprint(dealer_bp,      url_prefix='/dealer')
-    app.register_blueprint(user_bp,        url_prefix='/')
-    app.register_blueprint(background_bp,  url_prefix='/studio')
-    app.register_blueprint(minisite_bp,    url_prefix='')
-    app.register_blueprint(admin_bp,       url_prefix='/admin')
-    app.register_blueprint(policies_bp,    url_prefix='')
-    app.register_blueprint(chatbot_bp,     url_prefix='/chatbot')
-
-    # ── Warm up vehicle-photo AI classifier in background (Add Vehicle) ───────
-    # Loads CLIP once at startup so the first dealer upload isn't the one
-    # that pays the model-load cost. Safe no-op if torch/transformers
-    # aren't installed yet — logs a warning instead of crashing the app.
+    user.set_password(data['password'])
+    db.session.add(user)
+    db.session.flush()  # get user.id before commit
+    # Assign a PERMANENT display_id immediately — this ID will NEVER change
+    user.display_id = generate_display_id(data['role'])
+    db.session.commit()
+    # reassign_display_ids now only fills gaps for records missing IDs;
+    # it will NOT overwrite the display_id we just set.
     try:
-        from utils.vehicle_photo_ai import warm_up_in_background
-        warm_up_in_background()
-    except Exception as e:
-        app.logger.warning(f'Vehicle photo AI warm-up skipped: {e}')
+        reassign_display_ids(role=data['role'])
+    except Exception:
+        pass
+    return user.id
 
-    # ── Create all tables (including studio_image and admin_logs) ─────────────
-    from models import (seed_demo_data, AdminLog, SubAdmin,
-                        CentralDocumentStorage, CentralDocumentAuditLog,
-                        LeadImportFile, ImportedLead, LeadAssignmentHistory,
-                        VisitorLog, WhatsAppMessageLog)
-    with app.app_context():
-        db.create_all()        # now sees ALL models including StudioImage + Lead Import
 
-        # ── Migrate: add new columns to admin_logs if they don't exist ──────────
-        # Uses information_schema instead of SQLite PRAGMA table_info
-        try:
-            from sqlalchemy import text
-            with db.engine.connect() as conn:
-                if not _pg_column_exists(conn, 'admin_logs', 'user_role'):
-                    conn.execute(text("ALTER TABLE admin_logs ADD COLUMN user_role VARCHAR(30) DEFAULT 'Admin'"))
-                if not _pg_column_exists(conn, 'admin_logs', 'status'):
-                    conn.execute(text("ALTER TABLE admin_logs ADD COLUMN status VARCHAR(20) DEFAULT 'Success'"))
-                # ── Accurate Activity Logs fix: new optional columns ────────────
-                if not _pg_column_exists(conn, 'admin_logs', 'user_id'):
-                    conn.execute(text("ALTER TABLE admin_logs ADD COLUMN user_id INTEGER"))
-                if not _pg_column_exists(conn, 'admin_logs', 'description'):
-                    conn.execute(text("ALTER TABLE admin_logs ADD COLUMN description TEXT"))
-                if not _pg_column_exists(conn, 'admin_logs', 'device'):
-                    conn.execute(text("ALTER TABLE admin_logs ADD COLUMN device VARCHAR(20)"))
-                if not _pg_column_exists(conn, 'admin_logs', 'browser'):
-                    conn.execute(text("ALTER TABLE admin_logs ADD COLUMN browser VARCHAR(80)"))
-                if not _pg_column_exists(conn, 'admin_logs', 'timezone'):
-                    conn.execute(text("ALTER TABLE admin_logs ADD COLUMN timezone VARCHAR(50) DEFAULT 'Asia/Kolkata (IST)'"))
+def user_count_by_role(role):
+    return User.query.filter_by(role=role).count()
+
+
+def user_update_subscription(user_id, plan, expiry_date, status='active'):
+    user = User.query.get(user_id)
+    if user:
+        user.subscription_plan = plan
+        user.subscription_expiry = expiry_date
+        user.subscription_status = status
+        db.session.commit()
+        return True
+    return False
+
+# ========== AGENT FUNCTIONS ==========
+
+
+def agent_create(data):
+    agent = Agent(
+        dealer_id=data['dealer_id'],
+        name=data['name'],
+        email=data['email'],
+        phone=data['phone'],
+        status=data.get('status', 'available')
+    )
+    db.session.add(agent)
+    db.session.commit()
+    return agent.id
+
+
+def agent_update(agent_id, data):
+    agent = Agent.query.get(agent_id)
+    if agent:
+        if 'name' in data:
+            agent.name = data['name']
+        if 'email' in data:
+            agent.email = data['email']
+        if 'phone' in data:
+            agent.phone = data['phone']
+        if 'status' in data:
+            agent.status = data['status']
+        db.session.commit()
+        return True
+    return False
+
+
+def agent_delete(agent_id):
+    agent = Agent.query.get(agent_id)
+    if agent:
+        Lead.query.filter_by(agent_id=agent_id).update({Lead.agent_id: None})
+        db.session.delete(agent)
+        db.session.commit()
+        return True
+    return False
+
+
+def agent_get(agent_id):
+    agent = Agent.query.get(agent_id)
+    return agent.to_dict() if agent else None
+
+
+def agents_get_by_dealer(dealer_id):
+    # Order ASC first so the earliest-added agent always gets dealer_seq_id=1, next=2, etc.
+    agents = Agent.query.filter_by(dealer_id=dealer_id).order_by(
+        Agent.created_at.asc(), Agent.id.asc()).all()
+    result = []
+    for seq, a in enumerate(agents, start=1):
+        d = a.to_dict()
+        d['dealer_seq_id'] = seq   # per-dealer 1-based sequence, independent per dealer
+        result.append(d)
+    # Re-sort newest-first for table display; seq IDs are already locked
+    result.sort(key=lambda x: x['created_at'], reverse=True)
+    return result
+
+
+def agents_get_available(dealer_id):
+    agents = Agent.query.filter_by(
+        dealer_id=dealer_id, status='available').all()
+    return [{'id': a.id, 'name': a.name, 'email': a.email} for a in agents]
+
+
+def agents_get_leads_count(dealer_id):
+    results = db.session.query(Lead.agent_id, func.count(Lead.id)).filter_by(
+        dealer_id=dealer_id).group_by(Lead.agent_id).all()
+    return {r[0]: r[1] for r in results if r[0]}
+
+# ========== VEHICLE FUNCTIONS ==========
+
+
+def vehicle_create(data):
+    vehicle = Vehicle(
+        dealer_id=data['dealer_id'],
+        make=data['make'],
+        model=data['model'],
+        variant=data.get('variant', ''),
+        year=data['year'],
+        color=data.get('color', ''),
+        fuel_type=data.get('fuel_type', ''),
+        transmission=data.get('transmission', ''),
+        mileage=data.get('mileage', 0),
+        engine_cc=data.get('engine_cc', 0),
+        price=data['price'],
+        negotiable=data.get('negotiable', True),
+        condition=data.get('condition', 'used'),
+        status=data.get('status', 'available'),
+        description=data.get('description', ''),
+        vin_number=data.get('vin_number', ''),
+        registration_number=data.get('registration_number', ''),
+        rc_available=data.get('rc_available', True),
+        featured=data.get('featured', False),
+        image_filename=data.get('image_filename', 'None'),
+        # ── Featured Listing directly controls marketplace approval ─────────
+        # No admin approval step exists. When the dealer checks "Featured
+        # Listing", the vehicle is published to the marketplace immediately
+        # (approval_status='approved'); otherwise it stays 'pending' (not
+        # marketplace-listed), matching the previous default minus the admin
+        # step.
+        approval_status='approved' if data.get('featured', False) else 'pending',
+        # new condition detail fields
+        accident_history=data.get('accident_history', 'NA'),
+        loan_status=data.get('loan_status', 'NA'),
+        rc_service_records=data.get('rc_service_records', 'NA'),
+        major_issues=data.get('major_issues', 'None'),
+        keys_available=data.get('keys_available', 'NA'),
+        body_panel_status=data.get('body_panel_status', 'NA'),
+    )
+    if data.get('insurance_valid_till'):
+        vehicle.insurance_valid_till = datetime.strptime(
+            data['insurance_valid_till'], '%Y-%m-%d').date()
+
+    db.session.add(vehicle)
+    db.session.commit()
+    return vehicle.id
+
+
+def vehicle_update(vehicle_id, data):
+    """NOTE: this is the DEALER-facing update path (called only from
+    dealer/routes.py). Admin's own edit route sets Vehicle attributes
+    directly and does not go through here. 'approval_status' is therefore
+    hard-blocked below — a dealer must never be able to approve/reject
+    their own listing, no matter what ends up in `data`."""
+    vehicle = Vehicle.query.get(vehicle_id)
+
+    if vehicle:
+        for key, value in data.items():
+
+            # FIX INSURANCE DATE
+            if key == 'insurance_valid_till':
+                value = parse_date(value)
+
+            if hasattr(vehicle, key) and key not in [
+                'id',
+                'dealer_id',
+                'created_at',
+                'approval_status',   # admin-only — never settable by a dealer
+            ]:
+                setattr(vehicle, key, value)
+
+        db.session.commit()
+        return True
+
+    return False
+
+
+def vehicle_delete(vehicle_id):
+    vehicle = Vehicle.query.get(vehicle_id)
+    if vehicle:
+        db.session.delete(vehicle)
+        db.session.commit()
+        return True
+    return False
+
+
+def vehicle_get(vehicle_id):
+    vehicle = Vehicle.query.get(vehicle_id)
+    if not vehicle:
+        return None
+    data = vehicle.to_dict()
+    # Attach all gallery images so every consumer (user, minisite, admin) sees them
+    try:
+        extra_imgs = (
+            VehicleImage.query
+            .filter_by(vehicle_id=vehicle_id)
+            .order_by(VehicleImage.sort_order, VehicleImage.id)
+            .all()
+        )
+
+        # Filter out studio/processed/branded images for the public gallery.
+        # Keep only real uploaded car photos.
+        def is_real_photo(filename):
+            if not filename:
+                return False
+            f = filename.lower()
+            # Exclude studio-branded, background-removed, and processed images
+            if f.startswith('studio_'):
+                return False
+            if f.startswith('nobg_'):
+                return False
+            if f.startswith('proc_'):
+                return False
+            return True
+
+        real_imgs = [img for img in extra_imgs if is_real_photo(img.filename)]
+
+        # Sort: mandatory types first (front > rear > sides > engine > boot > interior),
+        # then gallery extras — so the actual car front photo always shows first.
+        TYPE_ORDER = {
+            'front': 0, 'rear': 1, 'right_side': 2, 'left_side': 3,
+            'engine': 4, 'boot': 5, 'interior': 6, 'gallery': 7
+        }
+        real_imgs.sort(key=lambda img: (
+            TYPE_ORDER.get(img.image_type, 7),
+            img.sort_order,
+            img.id
+        ))
+
+        data['extra_images'] = [img.filename for img in real_imgs]
+    except Exception:
+        data['extra_images'] = []
+    return data
+
+
+def vehicles_get_by_dealer(dealer_id, status=None, search='', fuel=None, approval=None, page=1, per_page=12):
+    query = Vehicle.query.filter_by(dealer_id=dealer_id)
+
+    if status and status != '':
+        query = query.filter_by(status=status)
+    if fuel and fuel != '':
+        query = query.filter_by(fuel_type=fuel)
+    if approval and approval != '':
+        query = query.filter_by(approval_status=approval)
+    if search:
+        query = query.filter(
+            or_(
+                Vehicle.make.ilike(f'%{search}%'),
+                Vehicle.model.ilike(f'%{search}%'),
+                Vehicle.registration_number.ilike(f'%{search}%')
+            )
+        )
+
+    total = query.count()
+    paginated = query.order_by(Vehicle.created_at.desc()).offset(
+        (page - 1) * per_page).limit(per_page).all()
+
+    return {
+        'items': [v.to_dict() for v in paginated],
+        'total': total,
+        'page': page,
+        'pages': (total + per_page - 1) // per_page,
+        'has_prev': page > 1,
+        'has_next': page < ((total + per_page - 1) // per_page),
+        'prev_num': page - 1 if page > 1 else None,
+        'next_num': page + 1 if page < ((total + per_page - 1) // per_page) else None
+    }
+
+
+def vehicles_public(make='', fuel='', transmission='', condition='', min_price=None, max_price=None, min_year=None, max_year=None, search='', sort='newest', page=1, per_page=12):
+    # Exclude vehicles that have a deal with status finalized or delivered
+    sold_vehicle_ids = db.session.query(Deal.vehicle_id).filter(
+        Deal.status.in_(['finalized', 'delivered'])
+    ).subquery()
+    query = Vehicle.query.filter(
+        Vehicle.status == 'available',
+        Vehicle.approval_status == 'approved',
+        ~Vehicle.id.in_(sold_vehicle_ids)
+    )
+
+    if make:
+        query = query.filter_by(make=make)
+    if fuel:
+        query = query.filter_by(fuel_type=fuel)
+    if transmission:
+        query = query.filter_by(transmission=transmission)
+    if condition:
+        query = query.filter_by(condition=condition)
+    if min_price:
+        query = query.filter(Vehicle.price >= min_price)
+    if max_price:
+        query = query.filter(Vehicle.price <= max_price)
+    if min_year:
+        query = query.filter(Vehicle.year >= min_year)
+    if max_year:
+        query = query.filter(Vehicle.year <= max_year)
+    if search:
+        query = query.filter(
+            or_(
+                Vehicle.make.ilike(f'%{search}%'),
+                Vehicle.model.ilike(f'%{search}%'),
+                Vehicle.variant.ilike(f'%{search}%')
+            )
+        )
+
+    if sort == 'price_asc':
+        query = query.order_by(Vehicle.price.asc())
+    elif sort == 'price_desc':
+        query = query.order_by(Vehicle.price.desc())
+    elif sort == 'year_desc':
+        query = query.order_by(Vehicle.year.desc())
+    elif sort == 'mileage_asc':
+        query = query.order_by(Vehicle.mileage.asc())
+    else:
+        query = query.order_by(Vehicle.created_at.desc())
+
+    total = query.count()
+    paginated = query.offset((page - 1) * per_page).limit(per_page).all()
+
+    return {
+        'items': [v.to_dict() for v in paginated],
+        'total': total,
+        'page': page,
+        'pages': (total + per_page - 1) // per_page,
+        'has_prev': page > 1,
+        'has_next': page < ((total + per_page - 1) // per_page),
+        'prev_num': page - 1 if page > 1 else None,
+        'next_num': page + 1 if page < ((total + per_page - 1) // per_page) else None
+    }
+
+
+def vehicles_featured(limit=6):
+    sold_vehicle_ids = db.session.query(Deal.vehicle_id).filter(
+        Deal.status.in_(['finalized', 'delivered'])
+    ).subquery()
+    vehicles = Vehicle.query.filter(
+        Vehicle.status == 'available',
+        Vehicle.featured == True,
+        Vehicle.approval_status == 'approved',
+        ~Vehicle.id.in_(sold_vehicle_ids)
+    ).limit(limit).all()
+    return [v.to_dict() for v in vehicles]
+
+
+def vehicles_latest(limit=8):
+    sold_vehicle_ids = db.session.query(Deal.vehicle_id).filter(
+        Deal.status.in_(['finalized', 'delivered'])
+    ).subquery()
+    vehicles = Vehicle.query.filter(
+        Vehicle.status == 'available',
+        Vehicle.approval_status == 'approved',
+        ~Vehicle.id.in_(sold_vehicle_ids)
+    ).order_by(Vehicle.created_at.desc()).limit(limit).all()
+    return [v.to_dict() for v in vehicles]
+
+
+def vehicles_makes_count():
+    sold_vehicle_ids = db.session.query(Deal.vehicle_id).filter(
+        Deal.status.in_(['finalized', 'delivered'])
+    ).subquery()
+    results = db.session.query(Vehicle.make, func.count(Vehicle.id)).filter(
+        Vehicle.status == 'available',
+        Vehicle.approval_status == 'approved',
+        ~Vehicle.id.in_(sold_vehicle_ids)
+    ).group_by(Vehicle.make).all()
+    return [{'make': r[0], 'cnt': r[1]} for r in results]
+
+
+def vehicles_similar(vehicle_id, make, limit=4):
+    sold_vehicle_ids = db.session.query(Deal.vehicle_id).filter(
+        Deal.status.in_(['finalized', 'delivered'])
+    ).subquery()
+    vehicles = Vehicle.query.filter(
+        Vehicle.status == 'available',
+        Vehicle.approval_status == 'approved',
+        Vehicle.make == make,
+        Vehicle.id != vehicle_id,
+        ~Vehicle.id.in_(sold_vehicle_ids)
+    ).limit(limit).all()
+    return [v.to_dict() for v in vehicles]
+
+
+def vehicles_inventory_summary(dealer_id):
+    vehicles = Vehicle.query.filter_by(dealer_id=dealer_id).all()
+    return {
+        'total': len(vehicles),
+        'available': sum(1 for v in vehicles if v.status == 'available'),
+        'sold': sum(1 for v in vehicles if v.status == 'sold'),
+        'reserved': sum(1 for v in vehicles if v.status == 'reserved'),
+        'trade_in': sum(1 for v in vehicles if v.status == 'trade-in')
+    }
+
+
+def vehicles_get_fuel_breakdown(dealer_id):
+    results = db.session.query(Vehicle.fuel_type, func.count(Vehicle.id)).filter_by(
+        dealer_id=dealer_id).group_by(Vehicle.fuel_type).all()
+    return [{'fuel_type': r[0] or 'Other', 'cnt': r[1]} for r in results]
+
+# ========== LEAD FUNCTIONS ==========
+
+
+def lead_create(data):
+    lead = Lead(
+        dealer_id=data['dealer_id'],
+        agent_id=data.get('agent_id'),
+        vehicle_id=data.get('vehicle_id'),
+        customer_name=data['customer_name'],
+        customer_email=data.get('customer_email', ''),
+        customer_phone=data['customer_phone'],
+        customer_city=data.get('customer_city', ''),
+        source=data.get('source', 'website'),
+        stage=data.get('stage', 'new'),
+        notes=data.get('notes', ''),
+        budget=data.get('budget'),
+        assigned_to=data.get('assigned_to', '')
+    )
+    if data.get('follow_up_date'):
+        lead.follow_up_date = datetime.strptime(
+            data['follow_up_date'], '%Y-%m-%dT%H:%M')
+
+    db.session.add(lead)
+    db.session.commit()
+    return lead.id
+
+
+def lead_update(lead_id, data):
+    lead = Lead.query.get(lead_id)
+    if lead:
+        for key, value in data.items():
+            if key == 'follow_up_date':
+                # Never pass empty string to DateTime column
+                if value and str(value).strip():
+                    try:
+                        value = datetime.strptime(str(value).strip(), '%Y-%m-%dT%H:%M')
+                    except (ValueError, TypeError):
+                        value = None
+                else:
+                    value = None
+            elif key in ('notes', 'assigned_to') and value is not None:
+                # Convert string 'None' to actual None or empty string
+                if str(value) == 'None':
+                    value = None
+            if hasattr(lead, key) and key not in ['id', 'dealer_id', 'created_at']:
+                setattr(lead, key, value)
+        db.session.commit()
+        return True
+    return False
+
+
+def lead_delete(lead_id):
+    lead = Lead.query.get(lead_id)
+    if lead:
+        db.session.delete(lead)
+        db.session.commit()
+        return True
+    return False
+
+
+def lead_get(lead_id):
+    lead = Lead.query.get(lead_id)
+    if lead:
+        result = lead.to_dict()
+        result['vehicle'] = vehicle_get(
+            lead.vehicle_id) if lead.vehicle_id else None
+        result['agent'] = agent_get(lead.agent_id) if lead.agent_id else None
+        return result
+    return None
+
+
+def leads_get_by_dealer(dealer_id, stage=None, search='', page=1, per_page=20):
+    query = Lead.query.filter_by(dealer_id=dealer_id)
+
+    if stage and stage != '':
+        query = query.filter_by(stage=stage)
+    if search:
+        query = query.filter(
+            or_(
+                Lead.customer_name.ilike(f'%{search}%'),
+                Lead.customer_phone.ilike(f'%{search}%'),
+                Lead.customer_email.ilike(f'%{search}%')
+            )
+        )
+
+    total = query.count()
+    paginated = query.order_by(Lead.created_at.desc()).offset(
+        (page - 1) * per_page).limit(per_page).all()
+
+    result = []
+    for lead in paginated:
+        lead_dict = lead.to_dict()
+        lead_dict['vehicle'] = vehicle_get(
+            lead.vehicle_id) if lead.vehicle_id else None
+        lead_dict['agent'] = agent_get(
+            lead.agent_id) if lead.agent_id else None
+        result.append(lead_dict)
+
+    return {
+        'items': result,
+        'total': total,
+        'page': page,
+        'pages': (total + per_page - 1) // per_page
+    }
+
+
+def leads_get_stage_counts(dealer_id):
+    stages = ['new', 'contacted', 'interested',
+              'test_drive', 'negotiation', 'converted', 'lost',
+              'connected', 'not_connected']
+    counts = {}
+    for stage in stages:
+        counts[stage] = Lead.query.filter_by(
+            dealer_id=dealer_id, stage=stage).count()
+    return counts
+
+
+def leads_get_source_counts(dealer_id):
+    results = db.session.query(Lead.source, func.count(Lead.id)).filter_by(
+        dealer_id=dealer_id).group_by(Lead.source).all()
+    return [{'source': r[0], 'cnt': r[1]} for r in results]
+
+# ========== DEAL FUNCTIONS ==========
+
+
+def deal_create(data):
+    gst_amount = data['final_price'] * 0.18
+    total_amount = data['final_price'] + gst_amount
+
+    deal = Deal(
+        dealer_id=data['dealer_id'],
+        lead_id=data.get('lead_id'),
+        vehicle_id=data['vehicle_id'],
+        customer_name=data['customer_name'],
+        customer_phone=data.get('customer_phone', ''),
+        customer_email=data.get('customer_email', ''),
+        asking_price=data.get('asking_price'),
+        final_price=data['final_price'],
+        payment_mode=data.get('payment_mode', 'cash'),
+        loan_amount=data.get('loan_amount'),
+        down_payment=data.get('down_payment'),
+        emi_months=data.get('emi_months'),
+        emi_amount=data.get('emi_amount'),
+        bank_name=data.get('bank_name'),
+        status=data.get('status', 'negotiation'),
+        booking_amount=data.get('booking_amount', 0),
+        gst_amount=gst_amount,
+        total_amount=total_amount,
+        notes=data.get('notes', ''),
+        # ── Financial Summary inputs ───────────────────────────────────────
+        purchase_price=data.get('purchase_price', 0),
+        transportation_cost=data.get('transportation_cost', 0),
+        repair_cost=data.get('repair_cost', 0),
+        registration_cost=data.get('registration_cost', 0),
+        marketing_cost=data.get('marketing_cost', 0),
+        other_expenses=data.get('other_expenses', 0),
+    )
+    # Auto-calculate Total Cost / Gross Profit / Net Profit (single source of truth)
+    deal.recompute_financials()
+    db.session.add(deal)
+    db.session.commit()
+
+    if data.get('status') in ['finalized', 'delivered']:
+        vehicle = Vehicle.query.get(data['vehicle_id'])
+        if vehicle:
+            vehicle.status = 'sold'
+            db.session.commit()
+
+    return deal.id
+
+
+def deal_update(deal_id, data):
+    deal = Deal.query.get(deal_id)
+    if deal:
+        for key, value in data.items():
+            if hasattr(deal, key) and key not in ['id', 'dealer_id', 'created_at']:
+                setattr(deal, key, value)
+        if 'final_price' in data:
+            deal.gst_amount = deal.final_price * 0.18
+            deal.total_amount = deal.final_price + deal.gst_amount
+        # Auto-calculate Total Cost / Gross Profit / Net Profit whenever any
+        # financial field (or the selling price) changes — single source of truth.
+        _financial_keys = ('purchase_price', 'transportation_cost', 'repair_cost',
+                            'registration_cost', 'marketing_cost', 'other_expenses',
+                            'final_price')
+        if any(k in data for k in _financial_keys):
+            deal.recompute_financials()
+        # Sync vehicle status when deal reaches terminal states
+        if 'status' in data:
+            vehicle = Vehicle.query.get(deal.vehicle_id)
+            if vehicle:
+                if data['status'] in ['finalized', 'delivered']:
+                    vehicle.status = 'sold'
+                elif data['status'] not in ['finalized', 'delivered'] and vehicle.status == 'sold':
+                    vehicle.status = 'available'
+        db.session.commit()
+        return True
+    return False
+
+
+def deal_get(deal_id):
+    deal = Deal.query.get(deal_id)
+    if deal:
+        result = deal.to_dict()
+        result['vehicle'] = vehicle_get(
+            deal.vehicle_id) if deal.vehicle_id else None
+        return result
+    return None
+
+
+def deals_get_by_dealer(dealer_id, status=None):
+    query = Deal.query.filter_by(dealer_id=dealer_id)
+    if status and status != '':
+        query = query.filter_by(status=status)
+
+    deals = query.order_by(Deal.created_at.desc()).all()
+    result = []
+    for deal in deals:
+        deal_dict = deal.to_dict()
+        deal_dict['vehicle'] = vehicle_get(
+            deal.vehicle_id) if deal.vehicle_id else None
+        result.append(deal_dict)
+    return result
+
+
+def deals_get_recent(dealer_id, limit=5):
+    deals = Deal.query.filter_by(dealer_id=dealer_id).order_by(
+        Deal.created_at.desc()).limit(limit).all()
+    return [{
+        'id': d.id,
+        'customer_name': d.customer_name,
+        'final_price': d.final_price,
+        'payment_mode': d.payment_mode,
+        'status': d.status
+    } for d in deals]
+
+
+def deals_get_status_counts(dealer_id):
+    statuses = ['negotiation', 'booked', 'finalized', 'delivered', 'cancelled']
+    counts = {}
+    for status in statuses:
+        counts[status] = Deal.query.filter_by(
+            dealer_id=dealer_id, status=status).count()
+    return counts
+
+
+def deals_get_financial_summary(dealer_id):
+    """
+    Single source of truth for every revenue/profit number shown on the
+    Dashboard, Finance and Reports pages.
+
+    NOTE: "delivered" here now means the deal is in one of DEAL_REVENUE_STATUSES
+    ('finalized' or 'delivered') — i.e. Completed/Delivered deals only. Draft,
+    Negotiation, Booked (Pending) and Cancelled deals are always excluded.
+    """
+    closed_deals = Deal.query.filter(
+        Deal.dealer_id == dealer_id,
+        Deal.status.in_(DEAL_REVENUE_STATUSES)
+    ).all()
+
+    total_revenue = sum(d.final_price or 0 for d in closed_deals)          # kept for backward-compat
+    total_gst = sum(d.gst_amount or 0 for d in closed_deals)
+    loan_deals = sum(
+        1 for d in closed_deals if d.payment_mode in ['loan', 'emi'])
+    cash_deals = sum(1 for d in closed_deals if d.payment_mode == 'cash')
+
+    # ── New Revenue & Profit Management KPIs ───────────────────────────────
+    total_sales = sum(d.final_price or 0 for d in closed_deals)            # Total Selling Price
+    total_purchase_cost = sum(d.purchase_price or 0 for d in closed_deals)
+    total_cost = sum(d.total_cost or 0 for d in closed_deals)
+    gross_profit = sum(d.gross_profit or 0 for d in closed_deals)
+    net_revenue = sum(d.net_profit or 0 for d in closed_deals)             # Net Revenue = sum(Net Profit)
+    total_vehicles_sold = len(closed_deals)
+
+    return {
+        'total_revenue': total_revenue,
+        'total_gst': total_gst,
+        'total_deals': len(closed_deals),
+        'loan_deals': loan_deals,
+        'cash_deals': cash_deals,
+        # new KPIs
+        'total_sales': total_sales,
+        'total_purchase_cost': total_purchase_cost,
+        'total_cost': total_cost,
+        'gross_profit': gross_profit,
+        'net_revenue': net_revenue,
+        'total_vehicles_sold': total_vehicles_sold,
+    }
+
+
+def deals_get_monthly_revenue(dealer_id, months=6):
+    results = []
+    today = _now_ist()
+
+    for i in range(months - 1, -1, -1):
+        month = today.month - i
+        year = today.year
+
+        if month <= 0:
+            month += 12
+            year -= 1
+
+        month_start = datetime(year, month, 1)
+
+        if month == 12:
+            month_end = datetime(year + 1, 1, 1)
+        else:
+            month_end = datetime(year, month + 1, 1)
+
+        revenue = db.session.query(func.sum(Deal.final_price)).filter(
+            Deal.dealer_id == dealer_id,
+            Deal.status == 'delivered',
+            Deal.created_at >= month_start,
+            Deal.created_at < month_end
+        ).scalar() or 0
+
+        results.append({
+            'month': month_start.strftime('%b %Y'),
+            'revenue': float(revenue)
+        })
+
+    return results
+
+# ========== DOCUMENT FUNCTIONS ==========
+
+
+def document_create(data):
+    doc = Document(
+        dealer_id=data['dealer_id'],
+        vehicle_id=data.get('vehicle_id'),
+        customer_name=data.get('customer_name', ''),
+        doc_type=data['doc_type'],
+        filename=data['filename'],
+        original_name=data.get('original_name', ''),
+        notes=data.get('notes', '')
+    )
+    db.session.add(doc)
+    db.session.commit()
+    return doc.id
+
+
+def document_delete(doc_id):
+    doc = Document.query.get(doc_id)
+    if doc:
+        db.session.delete(doc)
+        db.session.commit()
+        return True
+    return False
+
+
+def documents_get_by_dealer(dealer_id):
+    """
+    Return documents for a dealer, excluding any that have been deleted by an admin.
+    Documents are permanent — only admin deletion removes access.
+    """
+    from models import CentralDocumentStorage
+    docs = Document.query.filter_by(dealer_id=dealer_id).order_by(
+        Document.uploaded_at.desc()).all()
+
+    # Build a set of filenames that have been deleted in CDS
+    cds_blocked = set()
+    try:
+        deleted = CentralDocumentStorage.query.filter(
+            CentralDocumentStorage.dealer_id == dealer_id,
+            CentralDocumentStorage.status == 'deleted'
+        ).all()
+        for rec in deleted:
+            cds_blocked.add(rec.file_name)
+    except Exception:
+        pass  # CDS table may not exist yet; show all docs
+
+    result = []
+    for d in docs:
+        if d.filename in cds_blocked:
+            continue  # hidden from dealer — admin deleted it
+        result.append({
+            'id': d.id,
+            'doc_type': d.doc_type,
+            'customer_name': d.customer_name,
+            'vehicle_id': d.vehicle_id,
+            'filename': d.filename,
+            'original_name': d.original_name,
+            'notes': d.notes,
+            'uploaded_at': d.uploaded_at
+        })
+    return result
+
+# ========== INQUIRY FUNCTIONS ==========
+
+
+def inquiry_create(data):
+    inquiry = Inquiry(
+        vehicle_id=data['vehicle_id'],
+        dealer_id=data['dealer_id'],
+        name=data['name'],
+        email=data.get('email', ''),
+        phone=data['phone'],
+        message=data.get('message', ''),
+        inquiry_type=data.get('inquiry_type', 'general'),
+        status='pending'
+    )
+    db.session.add(inquiry)
+    db.session.commit()
+
+    # ── WhatsApp confirmation to the customer (fire-and-forget) ────────────
+    # Safe no-op until WHATSAPP_ENABLED + credentials are configured — see
+    # utils/whatsapp.py. Never blocks or fails this function's own return.
+    try:
+        from utils.whatsapp import send_inquiry_confirmation
+        vehicle_label = None
+        if data.get('vehicle_id'):
+            v = Vehicle.query.get(data['vehicle_id'])
+            if v:
+                vehicle_label = f"{v.make} {v.model}".strip()
+        send_inquiry_confirmation(
+            name=data['name'], phone=data['phone'],
+            vehicle_label=vehicle_label, inquiry_id=inquiry.id
+        )
+    except Exception:
+        pass
+
+    return inquiry.id
+
+
+def inquiry_update_status(inquiry_id, status):
+    inquiry = Inquiry.query.get(inquiry_id)
+    if inquiry:
+        inquiry.status = status
+        db.session.commit()
+        return True
+    return False
+
+
+def inquiries_get_by_dealer(dealer_id):
+    # Show a dealer ONLY the inquiries for vehicles they themselves uploaded.
+    # Vehicles carry a dealer_id (set when the dealer lists them). We join
+    # Inquiry → Vehicle and keep only rows where Vehicle.dealer_id matches.
+    # Inquiries on vehicles that belong to a different dealer, or vehicles with
+    # no dealer owner, are excluded — the dealer should not see those.
+    from models import Vehicle
+    inquiries = (
+        Inquiry.query
+        .join(Vehicle, Inquiry.vehicle_id == Vehicle.id)
+        .filter(Vehicle.dealer_id == dealer_id)
+        .order_by(Inquiry.created_at.desc())
+        .all()
+    )
+    result = []
+    for inq in inquiries:
+        inq_dict = {
+            'id': inq.id,
+            'name': inq.name,
+            'email': inq.email,
+            'phone': inq.phone,
+            'message': inq.message,
+            'inquiry_type': inq.inquiry_type,
+            'status': inq.status,
+            'created_at': inq.created_at,
+            'dealer_id': inq.dealer_id,
+            'vehicle': vehicle_get(inq.vehicle_id) if inq.vehicle_id else None
+        }
+        result.append(inq_dict)
+    return result
+
+
+def init_db():
+    db.create_all()
+
+
+# ============================================================
+# CENTRALIZED DOCUMENT STORAGE FUNCTIONS
+# ============================================================
+
+def cds_register(data: dict) -> int:
+    """
+    Register any uploaded file into the Central Document Storage.
+    Call this immediately after saving a file to disk.
+
+    Required keys: file_name, file_path, module_name
+    Optional keys: dealer_id, original_name, document_type, uploaded_by,
+                   performed_by, user_role
+    Returns the new CentralDocumentStorage record id.
+    """
+    from models import CentralDocumentStorage, CentralDocumentAuditLog, User
+
+    record = CentralDocumentStorage(
+        dealer_id     = data.get('dealer_id'),
+        file_name     = data['file_name'],
+        original_name = data.get('original_name', data['file_name']),
+        file_path     = data['file_path'],
+        module_name   = data.get('module_name', 'Documents'),
+        document_type = data.get('document_type', ''),
+        uploaded_by   = data.get('uploaded_by'),
+        status        = 'active',
+    )
+    db.session.add(record)
+    db.session.flush()   # get record.id before committing
+
+    # Snapshot dealer name for audit
+    dealer_name = None
+    if data.get('dealer_id'):
+        d = User.query.get(data['dealer_id'])
+        if d:
+            dealer_name = d.name
+
+    audit = CentralDocumentAuditLog(
+        document_id   = record.id,
+        action        = 'uploaded',
+        performed_by  = data.get('performed_by', 'system'),
+        user_role     = data.get('user_role', 'System'),
+        dealer_name   = dealer_name,
+        document_type = data.get('document_type', ''),
+        notes         = f"Uploaded via {data.get('module_name', 'Documents')} module",
+    )
+    db.session.add(audit)
+    db.session.commit()
+    return record.id
+
+
+def cds_list_all(filters: dict = None) -> list:
+    """Return all CDS records (admin view). Optionally filter by status/module/dealer_id."""
+    from models import CentralDocumentStorage
+
+    q = CentralDocumentStorage.query
+
+    if filters:
+        if filters.get('status') and filters['status'] != 'all':
+            q = q.filter(CentralDocumentStorage.status == filters['status'])
+        if filters.get('module_name'):
+            q = q.filter(CentralDocumentStorage.module_name == filters['module_name'])
+        if filters.get('dealer_id'):
+            q = q.filter(CentralDocumentStorage.dealer_id == filters['dealer_id'])
+        if filters.get('search'):
+            term = f"%{filters['search']}%"
+            q = q.filter(
+                db.or_(
+                    CentralDocumentStorage.file_name.ilike(term),
+                    CentralDocumentStorage.original_name.ilike(term),
+                    CentralDocumentStorage.document_type.ilike(term),
+                )
+            )
+
+    records = q.order_by(CentralDocumentStorage.created_at.desc()).all()
+    return records
+
+
+def cds_get(record_id: int):
+    """Fetch single CDS record."""
+    from models import CentralDocumentStorage
+    return CentralDocumentStorage.query.get(record_id)
+
+
+
+def cds_soft_delete(record_id: int, performed_by: str = 'admin', user_role: str = 'Super Admin') -> bool:
+    """Soft-delete (mark as deleted; file is NOT removed from disk)."""
+    from models import CentralDocumentStorage, CentralDocumentAuditLog
+
+    rec = CentralDocumentStorage.query.get(record_id)
+    if not rec:
+        return False
+    if rec.status == 'deleted':
+        return False  # already deleted
+
+    rec.status = 'deleted'
+    audit = CentralDocumentAuditLog(
+        document_id   = rec.id,
+        action        = 'deleted',
+        performed_by  = performed_by,
+        user_role     = user_role,
+        dealer_name   = rec.dealer.name if rec.dealer else None,
+        document_type = rec.document_type,
+        notes         = 'Soft-deleted by admin.',
+    )
+    db.session.add(audit)
+    db.session.commit()
+    return True
+
+
+def cds_hard_delete(record_id: int, upload_folder: str, performed_by: str = 'admin') -> bool:
+    """Permanently delete the DB record AND the physical file from disk."""
+    import os
+    from models import CentralDocumentStorage, CentralDocumentAuditLog
+    from datetime import datetime
+
+    rec = CentralDocumentStorage.query.get(record_id)
+    if not rec:
+        return False
+
+    # Delete physical file
+    full_path = os.path.join(upload_folder, rec.file_name)
+    if os.path.exists(full_path):
+        os.remove(full_path)
+
+    # Log before deleting the record
+    audit = CentralDocumentAuditLog(
+        document_id  = None,  # record being deleted
+        action       = 'hard_deleted',
+        performed_by = performed_by,
+        notes        = f"Permanently deleted file: {rec.file_name} (module: {rec.module_name})",
+    )
+    db.session.add(audit)
+    db.session.delete(rec)
+    db.session.commit()
+    return True
+
+
+def cds_get_audit_logs(document_id: int = None) -> list:
+    """Return audit logs for a specific document (or all if document_id is None)."""
+    from models import CentralDocumentAuditLog
+    q = CentralDocumentAuditLog.query
+    if document_id:
+        q = q.filter(CentralDocumentAuditLog.document_id == document_id)
+    return q.order_by(CentralDocumentAuditLog.created_at.desc()).all()
+
+
+def reassign_display_ids(role: str = None) -> None:
+    """
+    PERMANENT DEALER ID ENFORCEMENT
+    ════════════════════════════════
+    This function NO LONGER renumbers dealers — doing so would break the
+    permanent-ID guarantee (a deleted D3 would be reassigned to a new dealer).
+
+    Instead it works in ASSIGN-ONLY mode:
+      • If a dealer/user already has a display_id  →  leave it unchanged.
+      • If a dealer/user is missing a display_id   →  assign the next unused number.
+
+    The result is that IDs are always gapless from 1 … current_max  for NEW
+    additions, but existing IDs (including those belonging to suspended or
+    soft-deleted dealers) are NEVER touched.
+
+    Dealer ID Lifecycle guarantees preserved:
+      ✓ D3 suspended  → D3 stays D3 forever
+      ✓ D3 deleted    → D3 stays D3; new dealer gets D5 (or next unused)
+      ✓ D3 reactivated → D3 still has display_id = D3
+      ✓ New dealer    → gets max(all existing D-numbers) + 1
+    """
+    from models import User
+    from sqlalchemy import text
+
+    # Ensure display_id column exists (safety for fresh DBs)
+    # Uses information_schema instead of SQLite PRAGMA table_info
+    try:
+        with db.engine.connect() as conn:
+            _col_exists = conn.execute(text("""
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_name = 'users' AND column_name = 'display_id'
+            """)).scalar()
+            if not _col_exists:
+                conn.execute(text("ALTER TABLE users ADD COLUMN display_id TEXT"))
                 conn.commit()
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-        # ── Migrate: visitor_logs table columns (create_all handles new DBs) ──
-        # PostgreSQL: CREATE TABLE IF NOT EXISTS uses SERIAL instead of AUTOINCREMENT.
-        # db.create_all() already creates the table from the VisitorLog model,
-        # so we only need to add any columns that may be missing on older DBs.
-        try:
-            from sqlalchemy import text as _vt
-            with db.engine.connect() as _vc:
-                # Add columns that were added in later versions — safe no-ops on fresh DBs
-                if not _pg_column_exists(_vc, 'visitor_logs', 'session_id'):
-                    _vc.execute(_vt("ALTER TABLE visitor_logs ADD COLUMN session_id VARCHAR(64)"))
-                if not _pg_column_exists(_vc, 'visitor_logs', 'user_id'):
-                    _vc.execute(_vt("ALTER TABLE visitor_logs ADD COLUMN user_id INTEGER"))
-                if not _pg_column_exists(_vc, 'visitor_logs', 'visitor_name'):
-                    _vc.execute(_vt("ALTER TABLE visitor_logs ADD COLUMN visitor_name VARCHAR(100)"))
-                if not _pg_column_exists(_vc, 'visitor_logs', 'visitor_role'):
-                    _vc.execute(_vt("ALTER TABLE visitor_logs ADD COLUMN visitor_role VARCHAR(30)"))
-                _vc.commit()
-        except Exception:
-            pass
+    roles_to_process = []
+    if role in (None, 'dealer'):
+        roles_to_process.append(('dealer', 'D'))
+    if role in (None, 'user'):
+        roles_to_process.append(('user', 'U'))
 
-        # ── Migrate: Revenue & Profit Management System — new deals columns ────
-        # Adds Financial Summary fields to the deals table on existing DBs.
-        # db.create_all() already creates them on fresh databases.
-        try:
-            from sqlalchemy import text as _dft
-            with db.engine.connect() as _dfc:
-                _deal_financial_columns = [
-                    ('purchase_price',      "FLOAT DEFAULT 0"),
-                    ('transportation_cost', "FLOAT DEFAULT 0"),
-                    ('repair_cost',         "FLOAT DEFAULT 0"),
-                    ('registration_cost',   "FLOAT DEFAULT 0"),
-                    ('marketing_cost',      "FLOAT DEFAULT 0"),
-                    ('total_cost',          "FLOAT DEFAULT 0"),
-                    ('other_expenses',      "FLOAT DEFAULT 0"),
-                    ('gross_profit',        "FLOAT DEFAULT 0"),
-                    ('net_profit',          "FLOAT DEFAULT 0"),
-                ]
-                for _col_name, _col_def in _deal_financial_columns:
-                    if not _pg_column_exists(_dfc, 'deals', _col_name):
-                        _dfc.execute(_dft(f"ALTER TABLE deals ADD COLUMN {_col_name} {_col_def}"))
-                _dfc.commit()
-        except Exception:
-            pass
+    for r, prefix in roles_to_process:
+        # Collect ALL existing numbers for this role (including any gaps)
+        existing_nums = set()
+        for rec in User.query.filter_by(role=r).all():
+            if rec.display_id and rec.display_id.startswith(prefix):
+                try:
+                    existing_nums.add(int(rec.display_id[len(prefix):]))
+                except (ValueError, TypeError):
+                    pass
 
-        # ── Migrate: make leads.dealer_id nullable on existing PostgreSQL DBs ──
-        # PostgreSQL supports ALTER COLUMN … DROP NOT NULL directly — no table rebuild needed.
-        try:
-            from sqlalchemy import text as _lt
-            with db.engine.connect() as _lc:
-                # Check whether dealer_id column is NOT NULL in PostgreSQL
-                _nn_check = _lc.execute(_lt("""
-                    SELECT is_nullable
-                    FROM information_schema.columns
-                    WHERE table_name = 'leads'
-                      AND column_name = 'dealer_id'
-                """)).fetchone()
-                if _nn_check and _nn_check[0] == 'NO':
-                    # PostgreSQL supports DROP NOT NULL directly — no table rebuild
-                    _lc.execute(_lt("ALTER TABLE leads ALTER COLUMN dealer_id DROP NOT NULL"))
-                _lc.commit()
-        except Exception:
-            pass
+        # Only assign IDs to records that don't have one yet
+        next_num = (max(existing_nums) + 1) if existing_nums else 1
+        records_needing_id = (
+            User.query
+            .filter_by(role=r)
+            .filter(
+                db.or_(User.display_id == None, User.display_id == '')
+            )
+            .order_by(User.created_at.asc(), User.id.asc())
+            .all()
+        )
+        for rec in records_needing_id:
+            # Skip over any number already taken
+            while next_num in existing_nums:
+                next_num += 1
+            rec.display_id = f"{prefix}{next_num}"
+            existing_nums.add(next_num)
+            next_num += 1
 
-        seed_demo_data()
+    db.session.commit()
 
-        # ── Migrate: Reassign display IDs (D1/D2, U1/U2, SA1/SA2) ───────────
-        try:
-            from sqlalchemy import text as _text
-            with db.engine.connect() as _conn:
-                if not _pg_column_exists(_conn, 'sub_admins', 'display_id'):
-                    _conn.execute(_text("ALTER TABLE sub_admins ADD COLUMN display_id TEXT"))
-                if not _pg_column_exists(_conn, 'users', 'display_id'):
-                    _conn.execute(_text("ALTER TABLE users ADD COLUMN display_id TEXT"))
-                for _role, _pfx in (('dealer', 'D'), ('user', 'U')):
-                    _rows = _conn.execute(_text(
-                        "SELECT id FROM users WHERE role=:role "
-                        "ORDER BY COALESCE(created_at, '1970-01-01'::timestamp), id"
-                    ), {"role": _role}).fetchall()
-                    for _i, _r in enumerate(_rows, 1):
-                        _conn.execute(_text("UPDATE users SET display_id=:d WHERE id=:i"),
-                                      {"d": f"{_pfx}{_i}", "i": _r[0]})
-                _sa_rows = _conn.execute(_text(
-                    "SELECT id FROM sub_admins ORDER BY COALESCE(created_at, '1970-01-01'::timestamp), id"
-                )).fetchall()
-                for _i, _r in enumerate(_sa_rows, 1):
-                    _conn.execute(_text("UPDATE sub_admins SET display_id=:d WHERE id=:i"),
-                                  {"d": f"SA{_i}", "i": _r[0]})
-                _conn.commit()
-        except Exception:
-            pass
 
-    from db import user_get_by_id
+def cds_dealer_active_docs(dealer_id: int) -> list:
+    """Return active CDS records assigned to a dealer BY admin only.
+    Excludes documents the dealer uploaded themselves so they don't appear
+    twice (once here and once in the dealer's own Documents table).
+    """
+    from models import CentralDocumentStorage
+    return CentralDocumentStorage.query.filter(
+        CentralDocumentStorage.dealer_id == dealer_id,
+        CentralDocumentStorage.status == 'active',
+        # Only show docs that were NOT uploaded by the dealer themselves
+        db.or_(
+            CentralDocumentStorage.uploaded_by == None,
+            CentralDocumentStorage.uploaded_by != dealer_id,
+        ),
+    ).order_by(CentralDocumentStorage.created_at.desc()).all()
 
-    @app.before_request
-    def load_user():
-        uid = session.get('user_id')
-        g.user = user_get_by_id(uid) if uid else None
-
-    @app.context_processor
-    def inject_user():
-        return dict(current_user=g.user)  # None when not logged in
-
-    # ── Subscription feature gate — usable in ALL templates as feature_allowed('finance') ──
-    @app.context_processor
-    def inject_feature_gate():
-        from subscription_features import feature_allowed
-        return dict(feature_allowed=feature_allowed)
-
-    # ── Minisite URL helper — available in ALL templates ──────────────────────
-    # Usage in Jinja:  {{ minisite_url('ABC') }}
-    # Returns:  https://yourdomain.com/caryanams/ABC
-    @app.context_processor
-    def inject_minisite_url():
-        def minisite_url(dealer_name, website_name):
-            if not website_name:
-                return ''
-            # Prefer the live incoming request's own origin first, so the
-            # displayed/shared link always matches whatever domain/IP the
-            # browser is actually using right now (localhost, LAN IP, or
-            # the real live domain). Fall back to the static APP_URL env
-            # config only if the request origin can't be determined
-            # (e.g. outside of a request context, such as a CLI script).
-            base = ''
-            from flask import request as _req
-            try:
-                base = _req.url_root.rstrip('/')
-            except RuntimeError:
-                base = ''
-            if not base:
-                base = app.config.get('APP_URL', '').rstrip('/')
-            if not base:
-                base = 'http://localhost:5000'
-            d_slug = (dealer_name or '').strip().lower().replace(' ', '')
-            w_slug = website_name.strip().lower().replace(' ', '-')
-            return f'{base}/caryanams/{d_slug}/{w_slug}'
-        return dict(minisite_url=minisite_url)
-
-    @app.template_global('minisite_url')
-    def minisite_url_global(dealer_name, website_name):
-        if not website_name:
-            return ''
-        base = ''
-        from flask import request as _req
-        try:
-            base = _req.url_root.rstrip('/')
-        except RuntimeError:
-            base = ''
-        if not base:
-            base = app.config.get('APP_URL', '').rstrip('/')
-        if not base:
-            base = 'http://localhost:5000'
-        d_slug = (dealer_name or '').strip().lower().replace(' ', '')
-        w_slug = website_name.strip().lower().replace(' ', '-')
-        return f'{base}/caryanams/{d_slug}/{w_slug}'
-
-    @app.template_filter('fmtdate')
-    def fmtdate(s, fmt='%d %b %Y'):
-        if not s:
-            return '—'
-        try:
-            from datetime import datetime, timedelta
-            if isinstance(s, str):
-                s = s[:19]
-                dt = datetime.strptime(s, '%Y-%m-%d %H:%M:%S')
-            else:
-                dt = s
-            # Convert stored UTC → IST (UTC+5:30)
-            dt = dt + timedelta(hours=5, minutes=30)
-            return dt.strftime(fmt)
-        except Exception:
-            return str(s)[:10]
-
-    @app.template_filter('fmtprice')
-    def fmtprice(v):
-        try:
-            return '₹{:,.0f}'.format(float(v))
-        except Exception:
-            return '—'
-
-    # ── Global JSON error handlers (prevent HTML error pages reaching JS) ─────
-    # FIX: Without these, Flask returns HTML 404/500 pages which cause the
-    # "Unexpected token '<'" JSON parse error in the frontend fetch() calls.
-    # Covers all status codes. Uses success:false format matching upload route.
-    from flask import jsonify
-    from flask_wtf.csrf import CSRFError
-
-    @app.errorhandler(CSRFError)
-    def handle_csrf_error(e):
-        # Fires when a form/AJAX request is missing a valid CSRF token —
-        # e.g. an expired session, a token stripped by a proxy, or a real
-        # forged cross-site request. Return JSON (not Flask-WTF's default
-        # HTML page) so existing fetch() calls across the app can parse it,
-        # and flash a friendly message for normal <form> submissions too.
-        try:
-            flash('Your session security check failed (page may have been open too long). Please try again.', 'error')
-        except Exception:
-            pass
-        return jsonify({
-            'success': False,
-            'error': 'Security check failed (invalid or missing CSRF token). Please refresh the page and try again.',
-            'code': 400
-        }), 400
-
-    @app.errorhandler(400)
-    def bad_request(e):
-        return jsonify({'success': False, 'error': 'Bad request', 'code': 400}), 400
-
-    @app.errorhandler(403)
-    def forbidden(e):
-        return jsonify({'success': False, 'error': 'Forbidden', 'code': 403}), 403
-
-    @app.errorhandler(404)
-    def not_found(e):
-        return jsonify({'success': False, 'error': 'Not found', 'code': 404}), 404
-
-    @app.errorhandler(405)
-    def method_not_allowed(e):
-        return jsonify({'success': False, 'error': 'Method not allowed', 'code': 405}), 405
-
-    @app.errorhandler(413)
-    def request_too_large(e):
-        return jsonify({'success': False, 'error': 'File too large. Maximum size is 100 MB.', 'code': 413}), 413
-
-    @app.errorhandler(500)
-    def internal_error(e):
-        return jsonify({'success': False, 'error': 'Internal server error', 'code': 500}), 500
-
-    return app
-
-app = create_app()
-
-if __name__ == '__main__':
-    
-    app.run(debug=True, port=5000)
