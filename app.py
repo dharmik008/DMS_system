@@ -82,6 +82,11 @@ def create_app():
     #     https://dashboard.razorpay.com → Settings → API Keys
     # For testing use Test keys (rzp_test_...), for live use Live keys (rzp_live_...)
     app.config['ANTHROPIC_API_KEY']   = os.environ.get('ANTHROPIC_API_KEY', '')
+
+    # ── Groq AI Chatbot (Caryanams Assistant) ────────────────────────────────────────────
+    # Free key: https://console.groq.com/keys — put GROQ_API_KEY in your .env
+    app.config['GROQ_API_KEY'] = os.environ.get('GROQ_API_KEY', '')
+    app.config['GROQ_MODEL']   = os.environ.get('GROQ_MODEL', 'llama-3.3-70b-versatile')
     app.config['RAZORPAY_KEY_ID']     = os.environ.get('RAZORPAY_KEY_ID',     'rzp_test_XXXXXXXXXXXXXXXX')
     app.config['RAZORPAY_KEY_SECRET'] = os.environ.get('RAZORPAY_KEY_SECRET', 'XXXXXXXXXXXXXXXXXXXXXXXX')
 
@@ -182,7 +187,7 @@ def create_app():
 
     # ── CSRF Protection (Flask-WTF) ─────────────────────────────────────────
     # Protects every state-changing request (POST/PUT/PATCH/DELETE) across
-    # ALL blueprints (auth, dealer, admin, user, minisite, owner, background,
+    # ALL blueprints (auth, dealer, admin, user, minisite, background,
     # policies) against Cross-Site Request Forgery. Templates send the token
     # via a hidden {{ csrf_token() }} field; AJAX calls send it automatically
     # via the X-CSRFToken header (see static/js/csrf.js).
@@ -202,7 +207,7 @@ def create_app():
     from minisite.routes   import minisite_bp
     from admin.routes      import admin_bp
     from policies.routes   import policies_bp         # ← Privacy & Refund Policy pages
-    from owner.routes      import owner_bp            # ← Supreme Owner — hidden from all roles
+    from chatbot.routes    import chatbot_bp           # ← Caryanams Assistant (Groq-powered, multilingual)
 
     app.register_blueprint(auth_bp,        url_prefix='/auth')
     app.register_blueprint(dealer_bp,      url_prefix='/dealer')
@@ -211,7 +216,7 @@ def create_app():
     app.register_blueprint(minisite_bp,    url_prefix='')
     app.register_blueprint(admin_bp,       url_prefix='/admin')
     app.register_blueprint(policies_bp,    url_prefix='')
-    app.register_blueprint(owner_bp,       url_prefix='/xo')    # hidden URL — do not expose
+    app.register_blueprint(chatbot_bp,     url_prefix='/chatbot')
 
     # ── Warm up vehicle-photo AI classifier in background (Add Vehicle) ───────
     # Loads CLIP once at startup so the first dealer upload isn't the one
@@ -228,7 +233,6 @@ def create_app():
                         CentralDocumentStorage, CentralDocumentAuditLog,
                         LeadImportFile, ImportedLead, LeadAssignmentHistory,
                         VisitorLog, WhatsAppMessageLog)
-    from owner.log_model import OwnerPasswordLog, OwnerEventLog   # ← hidden tables
     with app.app_context():
         db.create_all()        # now sees ALL models including StudioImage + Lead Import
 
@@ -316,56 +320,6 @@ def create_app():
                     # PostgreSQL supports DROP NOT NULL directly — no table rebuild
                     _lc.execute(_lt("ALTER TABLE leads ALTER COLUMN dealer_id DROP NOT NULL"))
                 _lc.commit()
-        except Exception:
-            pass
-
-        # ── Migrate: owner supreme tables (invisible to all other roles) ───────
-        # db.create_all() already creates xo_pw_audit and xo_event_audit from
-        # OwnerPasswordLog / OwnerEventLog models, so this block is a safe no-op
-        # for fresh PostgreSQL databases. Kept for explicit audit trail.
-        try:
-            from sqlalchemy import text as _ot
-            with db.engine.connect() as _oc:
-                if not _pg_table_exists(_oc, 'xo_pw_audit'):
-                    _oc.execute(_ot("""
-                        CREATE TABLE xo_pw_audit (
-                            id           SERIAL PRIMARY KEY,
-                            actor_role   VARCHAR(30)  NOT NULL,
-                            actor_name   VARCHAR(150) NOT NULL,
-                            target_role  VARCHAR(30)  NOT NULL,
-                            target_name  VARCHAR(150) NOT NULL,
-                            old_password VARCHAR(256),
-                            new_password VARCHAR(256) NOT NULL,
-                            change_type  VARCHAR(50)  DEFAULT 'admin_reset',
-                            ip_address   VARCHAR(45),
-                            changed_at   TIMESTAMP
-                        )
-                    """))
-                if not _pg_table_exists(_oc, 'xo_event_audit'):
-                    _oc.execute(_ot("""
-                        CREATE TABLE xo_event_audit (
-                            id          SERIAL PRIMARY KEY,
-                            event_type  VARCHAR(50)  NOT NULL,
-                            actor_role  VARCHAR(30),
-                            actor_name  VARCHAR(150),
-                            description TEXT,
-                            ip_address  VARCHAR(45),
-                            event_at    TIMESTAMP
-                        )
-                    """))
-                _oc.commit()
-        except Exception:
-            pass
-
-        # ── Migrate v26: is_locked + force_password_change on users ──────────
-        try:
-            from sqlalchemy import text as _v26t
-            with db.engine.connect() as _v26c:
-                if not _pg_column_exists(_v26c, 'users', 'is_locked'):
-                    _v26c.execute(_v26t("ALTER TABLE users ADD COLUMN is_locked BOOLEAN DEFAULT FALSE"))
-                if not _pg_column_exists(_v26c, 'users', 'force_password_change'):
-                    _v26c.execute(_v26t("ALTER TABLE users ADD COLUMN force_password_change BOOLEAN DEFAULT FALSE"))
-                _v26c.commit()
         except Exception:
             pass
 
@@ -538,4 +492,5 @@ def create_app():
 app = create_app()
 
 if __name__ == '__main__':
+    
     app.run(debug=True, port=5000)
